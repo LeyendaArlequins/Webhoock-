@@ -1,7 +1,7 @@
 // api/send.js
 import crypto from "crypto";
 
-const ALLOWED_AGENTS = ["roblox", "robloxstudio"];
+const ALLOWED_AGENTS = ["roblox", "robloxstudio", "sys", "http", "https"];
 const MAX_AGE_MS = 1000 * 60 * 5; // 5 minutos
 
 export default async function handler(req, res) {
