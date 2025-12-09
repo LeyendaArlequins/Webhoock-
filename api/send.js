@@ -1,74 +1,142 @@
-// api/send.js
+// api/send.js - VERSIÓN SEGURA
 import crypto from "crypto";
 
-const ALLOWED_AGENTS = ["roblox", "robloxstudio", "sys", "http", "https"];
-const MAX_AGE_MS = 1000 * 60 * 5; // 5 minutos
+// Configuración de seguridad
+const API_TOKEN = process.env.API_TOKEN; // Token secreto
+const API_SIGNATURE_KEY = process.env.API_SIGNATURE_KEY; // Clave para firma HMAC
+const MAX_AGE_MS = 1000 * 60 * 5; // 5 minutos máximo
 
 export default async function handler(req, res) {
+  console.log("🔐 Nueva petición recibida");
+  
   try {
     // 1. Solo métodos POST
     if (req.method !== "POST") {
+      console.log("❌ Método no permitido:", req.method);
       return res.status(405).json({ error: "Method Not Allowed" });
     }
 
-    const ua = (req.headers["user-agent"] || "").toLowerCase();
-
-    // 2. Bloqueo total a navegadores (Chrome, Firefox, Safari, etc.)
-    if (!ALLOWED_AGENTS.some(agent => ua.includes(agent))) {
-      return res.status(403).json({ error: "Forbidden" });
-    }
-
-    // 3. Verificación de token "Bearer <TOKEN>"
-    const auth = req.headers.authorization || "";
-    const EXPECTED = `Bearer ${process.env.API_TOKEN}`;
-    if (auth !== EXPECTED) {
+    // 2. Verificar token de autorización (Obligatorio)
+    const authHeader = req.headers.authorization || "";
+    const expectedToken = `Bearer ${API_TOKEN}`;
+    
+    console.log("🔑 Token recibido:", authHeader.substring(0, 20) + "...");
+    console.log("🔑 Token esperado:", expectedToken.substring(0, 20) + "...");
+    
+    if (authHeader !== expectedToken) {
+      console.log("❌ Token incorrecto o faltante");
       return res.status(401).json({ error: "Unauthorized" });
     }
 
-    // 4. Verificación de firma HMAC Anti-manipulación
+    // 3. Verificar timestamp para prevenir replay attacks
     const timestamp = req.headers["x-timestamp"];
-    const signature = req.headers["x-signature"];
-    const now = Date.now();
+    if (!timestamp) {
+      console.log("❌ Falta timestamp");
+      return res.status(400).json({ error: "Missing timestamp" });
+    }
 
-    // Checar timestamp válido
-    if (!timestamp || Math.abs(now - Number(timestamp)) > MAX_AGE_MS) {
+    const now = Date.now();
+    const requestTime = parseInt(timestamp);
+    
+    console.log("⏰ Timestamp recibido:", timestamp);
+    console.log("⏰ Tiempo actual:", now);
+    console.log("⏰ Diferencia:", Math.abs(now - requestTime), "ms");
+    
+    if (Math.abs(now - requestTime) > MAX_AGE_MS) {
+      console.log("❌ Timestamp muy viejo o futuro");
       return res.status(400).json({ error: "Stale request" });
     }
 
-    const rawBody = JSON.stringify(req.body || {});
-    const hmac = crypto.createHmac("sha256", process.env.API_SECRET);
-    hmac.update(timestamp + "." + rawBody);
-    const expectedSig = hmac.digest("hex");
+    // 4. Verificar firma HMAC (Protección contra manipulación)
+    const signature = req.headers["x-signature"];
+    if (!signature) {
+      console.log("❌ Falta firma HMAC");
+      return res.status(400).json({ error: "Missing signature" });
+    }
 
-    if (
-      !signature ||
-      signature.length !== expectedSig.length ||
-      !crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expectedSig))
-    ) {
+    // Crear string para firmar: timestamp + cuerpo
+    const rawBody = JSON.stringify(req.body || {});
+    const message = timestamp + "." + rawBody;
+    
+    // Calcular HMAC SHA256
+    const hmac = crypto.createHmac("sha256", API_SIGNATURE_KEY);
+    hmac.update(message);
+    const expectedSignature = hmac.digest("hex");
+    
+    console.log("✍️ Firma recibida:", signature.substring(0, 20) + "...");
+    console.log("✍️ Firma esperada:", expectedSignature.substring(0, 20) + "...");
+    
+    // Comparación segura contra timing attacks
+    const signatureValid = crypto.timingSafeEqual(
+      Buffer.from(signature),
+      Buffer.from(expectedSignature)
+    );
+    
+    if (!signatureValid) {
+      console.log("❌ Firma HMAC inválida");
       return res.status(401).json({ error: "Invalid signature" });
     }
 
-    // 5. Enviar a Discord (webhook oculto)
-    const payload = {
-      embeds: [req.body.embed]
-    };
-
-    const r = await fetch(process.env.DISCORD_WEBHOOK_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload)
-    });
-
-    if (!r.ok) {
-      return res.status(500).json({ error: "Webhook error" });
+    // 5. Verificar que el cuerpo tenga la estructura esperada
+    if (!req.body || !req.body.embed) {
+      console.log("❌ Estructura del cuerpo inválida");
+      return res.status(400).json({ error: "Invalid body structure" });
     }
 
-    // 6. Sin retorno de información sensible
-    return res.status(200).json({ ok: true });
+    // 6. Verificar que viene de Roblox (User-Agent opcional)
+    const userAgent = req.headers["user-agent"] || "";
+    const isRobloxRequest = userAgent.toLowerCase().includes("roblox") || 
+                           userAgent.toLowerCase().includes("syn") ||
+                           userAgent === "";
+    
+    if (!isRobloxRequest) {
+      console.log("⚠️ User-Agent inusual:", userAgent);
+      // No rechazamos, solo registramos (la seguridad ya está en HMAC)
+    }
 
-  } catch (err) {
-    // Log mínimo
-    console.error("Error:", err.message);
-    return res.status(500).json({ error: "Internal error" });
+    console.log("✅ Todas las verificaciones pasadas");
+    console.log("📦 Embed recibido:", JSON.stringify(req.body.embed, null, 2));
+
+    // 7. Enviar a Discord
+    const discordWebhook = process.env.DISCORD_WEBHOOK_URL;
+    if (!discordWebhook) {
+      console.log("❌ Webhook de Discord no configurado");
+      return res.status(500).json({ error: "Discord webhook not configured" });
+    }
+
+    const discordPayload = {
+      embeds: [req.body.embed],
+      username: "ZL Finder", // Nombre fijo en Discord
+      avatar_url: "https://i.imgur.com/4M34hi2.png" // Avatar fijo
+    };
+
+    console.log("📤 Enviando a Discord...");
+    const discordResponse = await fetch(discordWebhook, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(discordPayload)
+    });
+
+    console.log("✅ Discord response:", discordResponse.status);
+    
+    if (!discordResponse.ok) {
+      const errorText = await discordResponse.text();
+      console.log("❌ Error de Discord:", errorText);
+      return res.status(500).json({ error: "Discord webhook error" });
+    }
+
+    console.log("🎉 Mensaje enviado exitosamente a Discord");
+    return res.status(200).json({ 
+      success: true, 
+      message: "Sent to Discord",
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (error) {
+    console.error("🔥 Error crítico en la API:", error.message);
+    return res.status(500).json({ 
+      error: "Internal server error",
+      details: process.env.NODE_ENV === "development" ? error.message : undefined
+    });
   }
 }
