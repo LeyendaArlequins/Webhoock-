@@ -112,7 +112,7 @@ async function sendToDiscord(eventData, serverId, playerCount) {
             }
         ],
         footer: {
-            text: `ZL Finder • ${new Date().toLocaleTimeString()}`
+            text: `ZL Finder V2 • ${new Date().toLocaleTimeString()}`
         },
         timestamp: new Date().toISOString()
     };
