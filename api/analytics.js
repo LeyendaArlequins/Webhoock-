@@ -1,12 +1,12 @@
-// api/analytics.js - API COMPATIBLE Y SEGURA
+// api/analytics.js - API CORREGIDA para Vercel
 import crypto from "crypto";
 
 // Clave secreta (DEBE COINCIDIR con la del script)
 const SECRET_KEY = process.env.SECRET_KEY || "IceScannerV2_S3cr3tK3y_2024_!@#$%^&*()";
 
-// Almacén de nonces usados (previene replay attacks)
+// Almacén de nonces usados
 const usedNonces = new Map();
-const NONCE_TIMEOUT = 5 * 60 * 1000; // 5 minutos
+const NONCE_TIMEOUT = 5 * 60 * 1000;
 
 // Limpiar nonces antiguos
 function cleanupOldNonces() {
@@ -18,28 +18,23 @@ function cleanupOldNonces() {
     }
 }
 
-// Función FNV hash (debe coincidir con el script)
-// Función FNV hash CORREGIDA para ser compatible con Lua
-// Función FNV hash CORREGIDA para ser compatible con Lua
+// Función FNV hash SIMPLIFICADA y COMPATIBLE
 function fnv32aHash(str) {
-    let hash = 2166136261; // FNV offset basis
+    let hash = 2166136261;
     for (let i = 0; i < str.length; i++) {
         const byte = str.charCodeAt(i);
-        hash = hash ^ byte;  // XOR simple
-        hash = (hash * 16777619) >>> 0;  // Multiplicar por FNV prime y mantener unsigned
+        hash = hash ^ byte;
+        hash = Math.imul(hash, 16777619); // Multiplicación de 32-bit
     }
-    return hash;
+    return hash >>> 0; // Convertir a unsigned
 }
 
-// Generar firma esperada (COMPATIBLE con Lua)
+// Generar firma esperada
 function generateExpectedSignature(data, timestamp, nonce) {
     const toSign = SECRET_KEY + ":" + timestamp + ":" + nonce + ":" + data;
-    
-    // Primer hash FNV (compatible)
     let hash = fnv32aHash(toSign);
     let hex = hash.toString(16).padStart(8, '0');
     
-    // Segundo hash
     const toSign2 = hex + ":" + SECRET_KEY;
     let hash2 = fnv32aHash(toSign2);
     
@@ -48,41 +43,34 @@ function generateExpectedSignature(data, timestamp, nonce) {
 
 // Verificar firma
 function verifySignature(data, receivedSignature, timestamp, nonce) {
-    // 1. Verificar timestamp (no más de 30 segundos)
+    cleanupOldNonces();
+    
+    // Verificar timestamp
     const timeDiff = Math.abs(Date.now() - parseInt(timestamp) * 1000);
     if (timeDiff > 30000) {
-        console.log("❌ Timestamp inválido:", timeDiff, "ms de diferencia");
+        console.log("❌ Timestamp inválido:", timeDiff, "ms");
         return false;
     }
     
-    // 2. Verificar nonce (prevenir replay)
+    // Verificar nonce
     if (usedNonces.has(nonce)) {
         console.log("❌ Nonce ya usado:", nonce);
         return false;
     }
     
-    // 3. Generar firma esperada
+    // Generar firma esperada
     const expectedSignature = generateExpectedSignature(data, timestamp, nonce);
+    console.log("🔐 Firma recibida:", receivedSignature);
+    console.log("🔐 Firma esperada:", expectedSignature);
     
-    // 4. Comparar en tiempo constante (previene timing attacks)
-    let match = true;
-    if (receivedSignature.length !== expectedSignature.length) {
-        match = false;
-    } else {
-        for (let i = 0; i < receivedSignature.length; i++) {
-            if (receivedSignature.charCodeAt(i) !== expectedSignature.charCodeAt(i)) {
-                match = false;
-            }
-        }
-    }
+    // Comparar
+    const isValid = receivedSignature === expectedSignature;
     
-    if (match) {
-        // Marcar nonce como usado
+    if (isValid) {
         usedNonces.set(nonce, Date.now());
-        cleanupOldNonces();
     }
     
-    return match;
+    return isValid;
 }
 
 // Decodificar datos
@@ -98,28 +86,32 @@ function decodeRobloxData(encoded) {
         return JSON.parse(decoded);
     } catch (error) {
         console.log("❌ Error decodificando:", error.message);
+        console.log("📄 Encoded (primeros 300 chars):", encoded.substring(0, 300));
         return null;
     }
 }
 
+// Handler principal
 export default async function handler(req, res) {
-    console.log("\n" + "=".repeat(60));
-    console.log("🔐 Petición segura recibida");
-    console.log("=".repeat(60));
+    console.log("\n" + "=".repeat(80));
+    console.log("🔐 Petición recibida - DEBUG MODE");
+    console.log("=".repeat(80));
     
     // Habilitar CORS
     res.setHeader('Access-Control-Allow-Credentials', true);
     res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Client-ID, X-Protocol-Version, X-Request-Time');
+    res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Client-ID, X-Protocol-Version');
     
     // Manejar preflight
     if (req.method === 'OPTIONS') {
+        console.log("✅ Preflight request handled");
         return res.status(200).end();
     }
     
     // Solo POST
     if (req.method !== 'POST') {
+        console.log("❌ Método no permitido:", req.method);
         return res.status(405).json({ 
             success: false, 
             error: 'Método no permitido' 
@@ -127,47 +119,117 @@ export default async function handler(req, res) {
     }
     
     try {
-        // Verificar Content-Type
-        if (!req.headers['content-type']?.includes('application/json')) {
+        // LOG DETALLADO
+        console.log("📋 Headers recibidos:");
+        console.log("  Content-Type:", req.headers['content-type']);
+        console.log("  User-Agent:", req.headers['user-agent']);
+        console.log("  X-Client-ID:", req.headers['x-client-id']);
+        console.log("  X-Protocol-Version:", req.headers['x-protocol-version']);
+        
+        // Obtener body como string (Vercel puede darlo como objeto o string)
+        let rawBody = '';
+        
+        if (typeof req.body === 'string') {
+            rawBody = req.body;
+            console.log("📦 Body es string, longitud:", rawBody.length);
+        } else if (Buffer.isBuffer(req.body)) {
+            rawBody = req.body.toString('utf8');
+            console.log("📦 Body es Buffer, convertido a string");
+        } else if (typeof req.body === 'object' && req.body !== null) {
+            rawBody = JSON.stringify(req.body);
+            console.log("📦 Body es objeto, convertido a JSON string");
+        } else {
+            console.log("📦 Body es de tipo:", typeof req.body);
+            rawBody = String(req.body || '');
+        }
+        
+        console.log("📄 Body raw (primeros 1000 chars):");
+        console.log(rawBody.substring(0, Math.min(1000, rawBody.length)));
+        
+        // Intentar parsear como JSON
+        let body;
+        try {
+            body = JSON.parse(rawBody);
+            console.log("✅ JSON parseado correctamente");
+        } catch (parseError) {
+            console.log("❌ Error parseando JSON:", parseError.message);
+            console.log("📄 Raw body que falló:", rawBody.substring(0, 500));
+            
+            // Intentar como texto plano
+            body = { raw: rawBody };
+            console.log("⚠️ Tratando body como texto plano");
+        }
+        
+        // Verificar campos requeridos
+        if (!body || (!body.p && !body.payload)) {
+            console.log("❌ No hay datos válidos en el body");
+            console.log("📊 Body recibido:", body);
             return res.status(400).json({ 
                 success: false, 
-                error: 'Content-Type debe ser application/json' 
+                error: 'Datos inválidos',
+                received: body
             });
         }
         
-        // Parsear body
-        const body = req.body;
-        console.log("📦 Body recibido:", JSON.stringify(body).substring(0, 500) + "...");
+        // Normalizar nombres de campos (aceptar 'payload' o 'p')
+        const payload = body.p || body.payload;
+        const signature = body.s || body.signature;
+        const nonce = body.n || body.nonce;
+        const timestamp = body.t || body.timestamp;
+        const version = body.v || body.version;
+        const clientId = body.c || body.client_id || body.cid;
+        
+        console.log("\n🔍 Campos normalizados:");
+        console.log("  Payload (p):", payload ? payload.substring(0, 100) + "..." : "NO");
+        console.log("  Signature (s):", signature);
+        console.log("  Nonce (n):", nonce);
+        console.log("  Timestamp (t):", timestamp);
+        console.log("  Version (v):", version);
+        console.log("  Client ID (c):", clientId);
         
         // Verificar campos requeridos
-        if (!body.p || !body.s || !body.n || !body.t || !body.v || !body.c) {
+        if (!payload || !signature || !nonce || !timestamp || !version || !clientId) {
+            const missing = [];
+            if (!payload) missing.push('payload');
+            if (!signature) missing.push('signature');
+            if (!nonce) missing.push('nonce');
+            if (!timestamp) missing.push('timestamp');
+            if (!version) missing.push('version');
+            if (!clientId) missing.push('clientId');
+            
+            console.log("❌ Campos faltantes:", missing);
             return res.status(400).json({ 
                 success: false, 
                 error: 'Campos requeridos faltantes',
-                required: ['p', 's', 'n', 't', 'v', 'c']
+                missing: missing
             });
         }
         
-        // Verificar versión del protocolo
-        if (body.v !== "2.0") {
+        // Verificar versión
+        if (version !== "2.0") {
+            console.log("❌ Versión incorrecta:", version);
             return res.status(400).json({ 
                 success: false, 
                 error: 'Versión de protocolo no compatible',
                 expected: "2.0",
-                received: body.v
+                received: version
             });
         }
         
-        // Verificar cliente ID
-        if (body.c !== "ice_scanner_pro") {
+        // Verificar cliente
+        if (clientId !== "ice_scanner_pro") {
+            console.log("❌ Cliente no autorizado:", clientId);
             return res.status(401).json({ 
                 success: false, 
                 error: 'Cliente no autorizado' 
             });
         }
         
-        // Verificar firma
-        if (!verifySignature(body.p, body.s, body.t, body.n)) {
+        console.log("\n🔐 Verificando firma...");
+        const isValid = verifySignature(payload, signature, timestamp, nonce);
+        
+        if (!isValid) {
+            console.log("❌ Firma inválida");
             return res.status(401).json({ 
                 success: false, 
                 error: 'Firma inválida' 
@@ -177,51 +239,68 @@ export default async function handler(req, res) {
         console.log("✅ Firma verificada correctamente");
         
         // Decodificar payload
-        const decodedPayload = decodeRobloxData(body.p);
+        console.log("\n🔍 Decodificando payload...");
+        const decodedPayload = decodeRobloxData(payload);
+        
         if (!decodedPayload) {
+            console.log("❌ No se pudo decodificar el payload");
             return res.status(400).json({ 
                 success: false, 
                 error: 'Payload inválido' 
             });
         }
         
-        console.log("📊 Payload decodificado:", JSON.stringify(decodedPayload, null, 2));
+        console.log("📊 Payload decodificado:");
+        console.log(JSON.stringify(decodedPayload, null, 2));
         
-        // Verificar estructura del payload
-        if (!decodedPayload.d || !decodedPayload.d.brainrot_data) {
+        // Extraer datos (con estructura flexible)
+        let brainrotData;
+        
+        if (decodedPayload.d && decodedPayload.d.brainrot_data) {
+            brainrotData = decodedPayload.d.brainrot_data;
+            console.log("✅ Datos extraídos de brainrot_data");
+        } else if (decodedPayload.data) {
+            brainrotData = decodedPayload.data;
+            console.log("✅ Datos extraídos de data");
+        } else if (decodedPayload.brainrot_data) {
+            brainrotData = decodedPayload.brainrot_data;
+            console.log("✅ Datos extraídos directamente");
+        } else {
+            console.log("❌ No se encontraron datos del brainrot");
+            console.log("📊 Estructura disponible:", Object.keys(decodedPayload));
             return res.status(400).json({ 
                 success: false, 
                 error: 'Estructura de datos inválida' 
             });
         }
         
-        // Extraer datos
-        const brainrotData = decodedPayload.d.brainrot_data;
-        const gameContext = decodedPayload.d.game_context || {};
-        
         console.log("\n🎯 BRAINROT DETECTADO:");
-        console.log("  🏷️  Animal:", brainrotData.animal);
-        console.log("  💰 Valor:", brainrotData.value);
-        console.log("  🧬 Generación:", brainrotData.generation);
-        console.log("  🆔 Server ID:", brainrotData.server_id);
+        console.log("  🏷️  Animal:", brainrotData.animal || "No disponible");
+        console.log("  💰 Valor:", brainrotData.value || 0);
+        console.log("  🧬 Generación:", brainrotData.generation || "No disponible");
+        console.log("  ⭐ Rareza:", brainrotData.rarity || "No disponible");
+        console.log("  📍 Plot:", brainrotData.plot || "No disponible");
+        console.log("  👥 Jugadores:", brainrotData.players || 0);
+        console.log("  🆔 Server ID:", brainrotData.server_id || "No disponible");
         console.log("  🖼️  Imagen:", brainrotData.image_url || "No disponible");
+        console.log("  📅 Timestamp:", brainrotData.timestamp || "No disponible");
         
-        // Crear embed de Discord
-        const embedColor = brainrotData.value >= 300 ? 16711680 : 16763904;
+        // Crear embed de Discord (con valores por defecto)
+        const embedColor = (brainrotData.value || 0) >= 300 ? 16711680 : 16763904;
         
         const discordEmbed = {
-            title: brainrotData.title || `Brainrot encontrado! (${brainrotData.value})`,
-            description: `**${brainrotData.animal}** - ${brainrotData.rarity}`,
+            title: brainrotData.title || `Brainrot encontrado! (${brainrotData.value || 0})`,
+            description: `**${brainrotData.animal || "Desconocido"}** - ${brainrotData.rarity || "Desconocido"}`,
             color: embedColor,
             fields: [
                 {
                     name: '🧬 Generación',
-                    value: `\`\`\`${brainrotData.generation}\`\`\``,
+                    value: `\`\`\`${brainrotData.generation || "Desconocido"}\`\`\``,
                     inline: true
                 },
                 {
                     name: '📊 Valor',
-                    value: `\`\`\`${Number(brainrotData.value).toLocaleString()}\`\`\``,
+                    value: `\`\`\`${Number(brainrotData.value || 0).toLocaleString()}\`\`\``,
                     inline: true
                 },
                 {
@@ -233,11 +312,6 @@ export default async function handler(req, res) {
                     name: '📍 Ubicación',
                     value: brainrotData.plot || "Desconocido",
                     inline: false
-                },
-                {
-                    name: '🆔 Server ID',
-                    value: `\`\`\`${brainrotData.server_id}\`\`\``,
-                    inline: false
                 }
             ],
             footer: {
@@ -245,6 +319,15 @@ export default async function handler(req, res) {
             },
             timestamp: new Date().toISOString()
         };
+        
+        // Añadir server ID si está disponible
+        if (brainrotData.server_id) {
+            discordEmbed.fields.push({
+                name: '🆔 Server ID',
+                value: `\`\`\`${brainrotData.server_id}\`\`\``,
+                inline: false
+            });
+        }
         
         // Añadir imagen si está disponible
         if (brainrotData.image_url) {
@@ -271,7 +354,7 @@ export default async function handler(req, res) {
                     avatar_url: "https://i.imgur.com/4M34hi2.png"
                 };
                 
-                if (brainrotData.value >= 1000) {
+                if ((brainrotData.value || 0) >= 1000) {
                     discordPayload.content = "@here 🚨 **HIGH VALUE DETECTED!** 🚨";
                 }
                 
@@ -284,6 +367,11 @@ export default async function handler(req, res) {
                 
                 console.log("✅ Discord status:", discordResponse.status);
                 
+                if (!discordResponse.ok) {
+                    const errorText = await discordResponse.text();
+                    console.log("❌ Discord error:", errorText);
+                }
+                
             } catch (discordError) {
                 console.log("⚠️ Error enviando a Discord:", discordError.message);
             }
@@ -292,19 +380,28 @@ export default async function handler(req, res) {
         }
         
         // Responder éxito
-        return res.status(200).json({ 
+        const responseData = { 
             success: true,
             message: "Reporte procesado exitosamente",
             processed: {
-                animal: brainrotData.animal,
-                value: brainrotData.value,
-                server_id: brainrotData.server_id,
+                animal: brainrotData.animal || "Desconocido",
+                value: brainrotData.value || 0,
+                server_id: brainrotData.server_id || "No disponible",
                 timestamp: new Date().toISOString()
             }
-        });
+        };
+        
+        console.log("\n✅ Respondiendo éxito:", JSON.stringify(responseData, null, 2));
+        console.log("=".repeat(80));
+        
+        return res.status(200).json(responseData);
         
     } catch (error) {
-        console.error("🔥 Error crítico:", error);
+        console.error("🔥 ERROR CRÍTICO:");
+        console.error("Message:", error.message);
+        console.error("Stack:", error.stack);
+        console.error("=".repeat(80));
+        
         return res.status(500).json({ 
             success: false,
             error: "Error interno del servidor",
