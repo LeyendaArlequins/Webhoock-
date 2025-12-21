@@ -1,84 +1,91 @@
-// api/analytics.js - CON HASH CORREGIDO
+// api/analytics.js - DEBUG EXTREMO DEL HASH
 const SECRET_KEY = process.env.SECRET_KEY || "IceScannerV2_S3cr3tK3y_2024_!@#$%^&*()";
 const CLIENT_ID = "ice_scanner_pro";
 const VERSION = "2.0";
 
-// Almacén de nonces
-const usedNonces = new Map();
-const NONCE_TIMEOUT = 5 * 60 * 1000;
-
-function cleanupOldNonces() {
-    const now = Date.now();
-    for (const [nonce, timestamp] of usedNonces.entries()) {
-        if (now - timestamp > NONCE_TIMEOUT) {
-            usedNonces.delete(nonce);
-        }
-    }
-}
-
-// HASH EXACTO que usa Lua (33 como multiplicador)
-function luaCompatibleHash(str) {
+// Hash IDÉNTICO al de Lua
+function debugLuaHash(str) {
+    console.log("🔍 CALCULANDO HASH para string de longitud:", str.length);
+    console.log("📝 Primeros 100 chars:", str.substring(0, 100));
+    
     let hash = 0;
     for (let i = 0; i < str.length; i++) {
         const byte = str.charCodeAt(i);
-        // Exactamente como lo hace Lua: hash = (hash * 33 + byte) % 0x100000000
-        hash = (hash * 33 + byte);
-        // Mantener en 32-bit unsigned
-        hash = hash >>> 0;
-    }
-    // Lua usa math.abs, pero para números positivos es lo mismo
-    return Math.abs(hash);
-}
-
-function generateExpectedSignature(data, timestamp, nonce) {
-    const toSign = SECRET_KEY + ":" + timestamp + ":" + nonce + ":" + data;
-    console.log("🔐 String para firmar:", toSign.substring(0, 100) + "...");
-    
-    const hash = luaCompatibleHash(toSign);
-    console.log("🔐 Hash calculado:", hash.toString(16));
-    
-    return hash.toString(16).padStart(8, '0');
-}
-
-function verifySignature(data, receivedSignature, timestamp, nonce) {
-    cleanupOldNonces();
-    
-    const timeDiff = Math.abs(Date.now() - parseInt(timestamp) * 1000);
-    if (timeDiff > 30000) {
-        console.log("❌ Timestamp inválido:", timeDiff, "ms");
-        return false;
-    }
-    
-    if (usedNonces.has(nonce)) {
-        console.log("❌ Nonce ya usado:", nonce);
-        return false;
-    }
-    
-    const expectedSignature = generateExpectedSignature(data, timestamp, nonce);
-    console.log("🔐 Firma recibida:", receivedSignature);
-    console.log("🔐 Firma esperada:", expectedSignature);
-    
-    const isValid = receivedSignature === expectedSignature;
-    
-    if (isValid) {
-        usedNonces.set(nonce, Date.now());
-        console.log("✅ FIRMA VÁLIDA - Nonce registrado");
-    } else {
-        console.log("❌ FIRMA NO COINCIDE");
-        // Debug: calcular hash paso a paso
-        console.log("🔍 DEBUG - Calculando hash manualmente...");
-        const testStr = SECRET_KEY + ":" + timestamp + ":" + nonce + ":" + data;
-        let testHash = 0;
-        for (let i = 0; i < Math.min(10, testStr.length); i++) {
-            const byte = testStr.charCodeAt(i);
-            testHash = (testHash * 33 + byte) >>> 0;
-            console.log(`  Paso ${i}: byte=${byte}, hash=${testHash.toString(16)}`);
+        const oldHash = hash;
+        hash = (hash * 33) + byte;
+        
+        // Convertir a 32-bit unsigned (como Lua con % 0x100000000)
+        if (hash > 0xFFFFFFFF) {
+            hash = hash % 0x100000000;
+        }
+        
+        // Solo mostrar primeros 10 pasos para debug
+        if (i < 10) {
+            console.log(`  Paso ${i}: byte=${byte} ('${String.fromCharCode(byte)}'), ` +
+                       `hash=${hash} (0x${hash.toString(16)})`);
         }
     }
     
-    return isValid;
+    // math.abs como en Lua
+    hash = Math.abs(hash);
+    console.log("🔢 Hash final:", hash);
+    console.log("🔢 Hash final (hex):", hash.toString(16));
+    
+    return hash;
 }
 
+function verifySignatureWithDebug(data, receivedSignature, timestamp, nonce) {
+    console.log("\n" + "=".repeat(60));
+    console.log("🔐 DEBUG COMPLETO DE FIRMA");
+    console.log("=".repeat(60));
+    
+    console.log("📊 Datos recibidos:");
+    console.log("  Timestamp:", timestamp);
+    console.log("  Nonce:", nonce);
+    console.log("  Data (primeros 100 chars):", data.substring(0, 100));
+    console.log("  Firma recibida:", receivedSignature);
+    
+    // Construir string para hash
+    const toSign = SECRET_KEY + ":" + timestamp + ":" + nonce + ":" + data;
+    console.log("\n🔑 String para hash:");
+    console.log("  Longitud:", toSign.length);
+    console.log("  Contenido (primeros 200 chars):");
+    console.log(toSign.substring(0, 200));
+    
+    // Calcular hash paso a paso
+    console.log("\n🧮 Calculando hash...");
+    const hash = debugLuaHash(toSign);
+    const expectedSignature = hash.toString(16).padStart(8, '0');
+    
+    console.log("\n📋 RESULTADOS:");
+    console.log("  Firma recibida:", receivedSignature);
+    console.log("  Firma esperada:", expectedSignature);
+    console.log("  ¿Coinciden?", receivedSignature === expectedSignature);
+    
+    if (receivedSignature !== expectedSignature) {
+        console.log("\n🔍 INVESTIGANDO DIFERENCIA...");
+        
+        // Verificar cada parte del string
+        console.log("  1. SECRET_KEY:", SECRET_KEY);
+        console.log("  2. timestamp:", timestamp, "(tipo:", typeof timestamp, ")");
+        console.log("  3. nonce:", nonce, "(tipo:", typeof nonce, ")");
+        console.log("  4. data (longitud):", data.length);
+        
+        // Verificar encoding
+        console.log("\n🔍 Verificando encoding de data:");
+        console.log("  Primeros 10 caracteres de data como códigos:");
+        for (let i = 0; i < Math.min(10, data.length); i++) {
+            const char = data[i];
+            console.log(`    [${i}] '${char}' = ${char.charCodeAt(0)}`);
+        }
+    }
+    
+    console.log("=".repeat(60));
+    
+    return receivedSignature === expectedSignature;
+}
+
+// Resto del código igual que antes...
 function decodeRobloxData(encoded) {
     try {
         let decoded = "";
@@ -111,7 +118,7 @@ async function parseRequestBody(req) {
 
 export default async function handler(req, res) {
     console.log("\n" + "=".repeat(80));
-    console.log("🔍 PETICIÓN RECIBIDA - HASH CORREGIDO");
+    console.log("🎯 NUEVA PETICIÓN - DEBUG HASH");
     console.log("=".repeat(80));
     
     // CORS
@@ -135,83 +142,64 @@ export default async function handler(req, res) {
         console.log("✅ Campos recibidos:", Object.keys(body));
         
         // Verificar campos
-        const required = ['p', 's', 'n', 't', 'v', 'c'];
-        const missing = required.filter(f => !body[f]);
-        
-        if (missing.length > 0) {
-            console.log("❌ Faltan:", missing);
-            return res.status(400).json({ error: 'Campos faltantes', missing });
+        if (!body.p || !body.s || !body.n || !body.t || !body.v || !body.c) {
+            return res.status(400).json({ error: 'Campos faltantes' });
         }
         
-        console.log("🔍 Datos recibidos:");
-        console.log("  p:", body.p.substring(0, 50) + "...");
-        console.log("  s:", body.s);
-        console.log("  n:", body.n);
-        console.log("  t:", body.t);
-        console.log("  v:", body.v);
-        console.log("  c:", body.c);
-        
-        if (body.v !== VERSION) {
-            return res.status(400).json({ error: 'Versión incorrecta' });
+        // Verificar versión y cliente
+        if (body.v !== VERSION || body.c !== CLIENT_ID) {
+            return res.status(400).json({ error: 'Cliente/versión incorrecta' });
         }
         
-        if (body.c !== CLIENT_ID) {
-            return res.status(401).json({ error: 'Cliente no autorizado' });
+        // Verificar firma con debug
+        if (!verifySignatureWithDebug(body.p, body.s, body.t, body.n)) {
+            return res.status(401).json({ 
+                error: 'Firma inválida',
+                debug: "Revisa logs para detalles"
+            });
         }
         
-        // Verificar firma
-        if (!verifySignature(body.p, body.s, body.t, body.n)) {
-            return res.status(401).json({ error: 'Firma inválida' });
-        }
+        console.log("🎉 FIRMA VÁLIDA!");
         
-        console.log("🎉 FIRMA VÁLIDA - Procesando...");
-        
-        // Decodificar
+        // Decodificar y procesar...
         const decoded = decodeRobloxData(body.p);
         if (!decoded) {
             return res.status(400).json({ error: 'Payload inválido' });
         }
         
-        const brainrotData = decoded.data || decoded.d?.brainrot_data || decoded;
-        console.log("🎯 Brainrot:", brainrotData.animal, "-", brainrotData.value);
-        
-        // Enviar a Discord
+        // Enviar a Discord si hay webhook
         const discordWebhook = process.env.DISCORD_WEBHOOK_URL;
         if (discordWebhook) {
-            const embed = {
-                title: brainrotData.title || `Brainrot (${brainrotData.value})`,
-                description: `**${brainrotData.animal}** - ${brainrotData.rarity}`,
-                color: brainrotData.value >= 300 ? 16711680 : 16763904,
-                fields: [
-                    { name: '🧬 Generación', value: `\`\`\`${brainrotData.generation}\`\`\``, inline: true },
-                    { name: '📊 Valor', value: `\`\`\`${Number(brainrotData.value).toLocaleString()}\`\`\``, inline: true },
-                    { name: '👥 Jugadores', value: `\`\`\`${brainrotData.players}/8\`\`\``, inline: true }
-                ],
-                footer: { text: `zl an • ${new Date().toLocaleDateString()}` },
-                timestamp: new Date().toISOString()
-            };
+            const brainrotData = decoded.data || decoded.d?.brainrot_data || decoded;
             
-            try {
-                await fetch(discordWebhook, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ embeds: [embed] })
-                });
-                console.log("✅ Enviado a Discord");
-            } catch (err) {
-                console.log("⚠️ Error Discord:", err.message);
+            if (brainrotData.animal && brainrotData.value) {
+                const embed = {
+                    title: `Brainrot: ${brainrotData.animal}`,
+                    description: `Valor: ${brainrotData.value}`,
+                    color: 0x00ff00,
+                    timestamp: new Date().toISOString()
+                };
+                
+                try {
+                    await fetch(discordWebhook, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ embeds: [embed] })
+                    });
+                    console.log("✅ Enviado a Discord");
+                } catch (err) {
+                    console.log("⚠️ Error Discord:", err.message);
+                }
             }
         }
         
         return res.status(200).json({ 
             success: true,
-            message: "Procesado",
-            animal: brainrotData.animal,
-            value: brainrotData.value
+            message: "Firma válida - Procesado correctamente"
         });
         
     } catch (error) {
         console.error("🔥 ERROR:", error);
-        return res.status(500).json({ error: "Error interno", message: error.message });
+        return res.status(500).json({ error: "Error interno" });
     }
 }
