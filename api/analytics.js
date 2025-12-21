@@ -1,12 +1,46 @@
-// api/analytics.js - API SECRETA
+// api/analytics.js - API SECRETA MEJORADA
 import crypto from "crypto";
 
-const SECRET_KEY = process.env.SECRET_KEY || "TU_CLAVE_SECRETA";
+const SECRET_KEY = process.env.SECRET_KEY || "TU_CLAVE_SECRETA_CRIPT";
 
-// Función para decodificar datos ofuscados
+// Función para verificar firma
+function verifySignature(data, signature) {
+    try {
+        // Calcular hash HMAC (debe coincidir con el del cliente)
+        const hash = crypto.createHmac('sha256', SECRET_KEY)
+            .update(data)
+            .digest('hex');
+        
+        // Comparar con firma recibida (adaptado a nuestro sistema simple)
+        const calculatedHash = calculateSimpleHash(data);
+        return signature === calculatedHash;
+    } catch (error) {
+        console.log("❌ Error verificando firma:", error.message);
+        return false;
+    }
+}
+
+// Función para calcular hash simple (como en el cliente)
+function calculateSimpleHash(data) {
+    let hash = 0;
+    for (let i = 0; i < data.length; i++) {
+        const byte = data.charCodeAt(i);
+        hash = (hash * 31 + byte) % 1000000;
+    }
+    
+    const combined = SECRET_KEY + hash.toString();
+    let finalHash = 0;
+    for (let i = 0; i < combined.length; i++) {
+        const byte = combined.charCodeAt(i);
+        finalHash = (finalHash * 37 + byte) % 1000000;
+    }
+    
+    return finalHash.toString().padStart(6, '0');
+}
+
+// Función para decodificar datos
 function decodeRobloxData(encoded) {
     try {
-        // Decodificar el formato numérico
         let decoded = "";
         for (let i = 0; i < encoded.length; i += 3) {
             const charCode = parseInt(encoded.substr(i, 3));
@@ -21,6 +55,9 @@ function decodeRobloxData(encoded) {
     }
 }
 
+// Almacen de nonces usados (para prevenir replay attacks)
+const usedNonces = new Set();
+
 export default async function handler(req, res) {
     console.log("🔐 Petición secreta recibida");
     
@@ -30,76 +67,90 @@ export default async function handler(req, res) {
             return res.status(405).json({ error: "Method not allowed" });
         }
 
-        // Verificar que viene de formulario (para parecer legítimo)
-        const contentType = req.headers['content-type'] || '';
-        if (!contentType.includes('application/x-www-form-urlencoded')) {
-            console.log("⚠️ Content-Type inusual:", contentType);
-        }
-
         // Obtener datos del cuerpo
         const bodyData = req.body;
-        const encryptedData = bodyData.data;
         
-        if (!encryptedData) {
-            return res.status(400).json({ error: "No data" });
+        if (!bodyData.payload || !bodyData.sig || !bodyData.nonce || !bodyData.ts) {
+            return res.status(400).json({ error: "Invalid request format" });
         }
 
-        // Decodificar datos
-        const decodedData = decodeRobloxData(encryptedData);
-        if (!decodedData) {
-            return res.status(400).json({ error: "Invalid data format" });
+        // Verificar nonce (prevenir replay attacks)
+        const nonceKey = bodyData.ts + "_" + bodyData.nonce;
+        if (usedNonces.has(nonceKey)) {
+            console.log("❌ Replay attack detectado:", nonceKey);
+            return res.status(403).json({ error: "Request already processed" });
+        }
+        
+        // Agregar nonce a usados (limpiar después de 5 minutos)
+        usedNonces.add(nonceKey);
+        setTimeout(() => usedNonces.delete(nonceKey), 5 * 60 * 1000);
+
+        // Verificar timestamp (no más de 30 segundos de diferencia)
+        const timeDiff = Math.abs(Date.now() - parseInt(bodyData.ts) * 1000);
+        if (timeDiff > 30000) {
+            console.log("❌ Timestamp inválido:", timeDiff, "ms de diferencia");
+            return res.status(400).json({ error: "Invalid timestamp" });
         }
 
-        console.log("📦 Datos decodificados:", JSON.stringify(decodedData, null, 2));
-
-        // Verificar que es de nuestro script
-        if (decodedData.action !== "log_event" || 
-            decodedData.event_data.type !== "zl_finder") {
-            console.log("❌ Estructura inválida");
-            return res.status(400).json({ error: "Invalid structure" });
+        // Decodificar payload
+        const decodedPayload = decodeRobloxData(bodyData.payload);
+        if (!decodedPayload) {
+            return res.status(400).json({ error: "Invalid payload" });
         }
 
-        // Extraer datos del embed
-        const eventData = decodedData.event_data.data;
-        const serverId = decodedData.event_data.server_id;
-        const playerCount = decodedData.event_data.players;
+        // Verificar firma
+        if (!verifySignature(JSON.stringify(decodedPayload), bodyData.sig)) {
+            console.log("❌ Firma inválida");
+            return res.status(401).json({ error: "Invalid signature" });
+        }
 
-        // Crear embed de Discord
-        const embedColor = eventData.value >= 3000000 ? 16711680 : 16763904;
+        // Extraer datos
+        const brainrotData = decodedPayload.d.brainrot_data;
+        const gameInfo = decodedPayload.d.game_info;
+
+        console.log("📦 Datos recibidos:");
+        console.log("  🏷️ Animal:", brainrotData.animal);
+        console.log("  💰 Valor:", brainrotData.value);
+        console.log("  🖼️ Imagen:", brainrotData.image_url || "No disponible");
+        console.log("  👥 Jugadores:", gameInfo.player_count);
+        console.log("  🆔 Job ID:", gameInfo.job_id);
+
+        // Crear embed de Discord con imagen
+        const embedColor = brainrotData.value >= 300 ? 16711680 : 16763904;
         
         const discordEmbed = {
-            title: eventData.title,
-            description: `**${eventData.animal}** - ${eventData.rarity}`,
+            title: brainrotData.title,
+            description: `**${brainrotData.animal}** - ${brainrotData.rarity}`,
             color: embedColor,
             fields: [
                 {
                     name: '🧬 Generación',
-                    value: `\`\`\`${eventData.generation}\`\`\``,
+                    value: `\`\`\`${brainrotData.generation}\`\`\``,
                     inline: true
                 },
                 {
                     name: '📊 Valor',
-                    value: `\`\`\`${eventData.value.toLocaleString()}\`\`\``,
+                    value: `\`\`\`${brainrotData.value.toLocaleString()}\`\`\``,
                     inline: true
                 },
                 {
                     name: '👥 Jugadores',
-                    value: `\`\`\`${playerCount}/8\`\`\``,
+                    value: `\`\`\`${gameInfo.player_count}/8\`\`\``,
                     inline: true
                 },
                 {
                     name: '📍 Plot',
-                    value: eventData.plot,
+                    value: brainrotData.plot,
                     inline: false
                 },
                 {
                     name: '🆔 Server ID',
-                    value: `\`\`\`${serverId}\`\`\``,
+                    value: `\`\`\`${gameInfo.job_id}\`\`\``,
                     inline: false
                 },
                 {
                     name: '🔗 Unirse',
-                    value: `[Click aquí](${eventData.join_link})`,
+                    value: `[Click aquí](${brainrotData.join_link})`,
                     inline: false
                 }
             ],
@@ -108,6 +159,14 @@ export default async function handler(req, res) {
             },
             timestamp: new Date().toISOString()
         };
+
+        // Añadir imagen si está disponible
+        if (brainrotData.image_url) {
+            discordEmbed.thumbnail = {
+                url: brainrotData.image_url
+            };
+            console.log("🖼️ Imagen añadida al embed");
+        }
 
         // Enviar a Discord
         const discordWebhook = process.env.DISCORD_WEBHOOK_URL;
@@ -137,13 +196,15 @@ export default async function handler(req, res) {
             return res.status(500).json({ error: "Discord error" });
         }
 
-        console.log("🎉 Mensaje enviado exitosamente");
+        console.log("🎉 Mensaje enviado exitosamente a Discord");
         
-        // Responder éxito (sin datos sensibles)
+        // Responder éxito
         return res.status(200).json({ 
             success: true, 
-            message: "Event logged",
-            timestamp: new Date().toISOString()
+            message: "Brainrot report processed",
+            timestamp: new Date().toISOString(),
+            brainrot: brainrotData.animal,
+            value: brainrotData.value
         });
 
     } catch (error) {
