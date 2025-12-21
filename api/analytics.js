@@ -240,7 +240,7 @@ export default async function handler(req, res) {
                 }
             ],
             footer: {
-                text: `Ice Scanner Pro • ${new Date().toLocaleDateString()}`
+                text: `zl an • ${new Date().toLocaleDateString()}`
             },
             timestamp: new Date().toISOString()
         };
