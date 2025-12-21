@@ -1,6 +1,4 @@
-// api/analytics.js - VERSIÓN CORREGIDA
-import crypto from "crypto";
-
+// api/analytics.js - CON HASH CORREGIDO
 const SECRET_KEY = process.env.SECRET_KEY || "IceScannerV2_S3cr3tK3y_2024_!@#$%^&*()";
 const CLIENT_ID = "ice_scanner_pro";
 const VERSION = "2.0";
@@ -18,19 +16,27 @@ function cleanupOldNonces() {
     }
 }
 
-// Hash compatible con Lua
-function compatibleHash(str) {
+// HASH EXACTO que usa Lua (33 como multiplicador)
+function luaCompatibleHash(str) {
     let hash = 0;
     for (let i = 0; i < str.length; i++) {
         const byte = str.charCodeAt(i);
-        hash = ((hash * 33) + byte) >>> 0;
+        // Exactamente como lo hace Lua: hash = (hash * 33 + byte) % 0x100000000
+        hash = (hash * 33 + byte);
+        // Mantener en 32-bit unsigned
+        hash = hash >>> 0;
     }
+    // Lua usa math.abs, pero para números positivos es lo mismo
     return Math.abs(hash);
 }
 
 function generateExpectedSignature(data, timestamp, nonce) {
     const toSign = SECRET_KEY + ":" + timestamp + ":" + nonce + ":" + data;
-    const hash = compatibleHash(toSign);
+    console.log("🔐 String para firmar:", toSign.substring(0, 100) + "...");
+    
+    const hash = luaCompatibleHash(toSign);
+    console.log("🔐 Hash calculado:", hash.toString(16));
+    
     return hash.toString(16).padStart(8, '0');
 }
 
@@ -56,6 +62,18 @@ function verifySignature(data, receivedSignature, timestamp, nonce) {
     
     if (isValid) {
         usedNonces.set(nonce, Date.now());
+        console.log("✅ FIRMA VÁLIDA - Nonce registrado");
+    } else {
+        console.log("❌ FIRMA NO COINCIDE");
+        // Debug: calcular hash paso a paso
+        console.log("🔍 DEBUG - Calculando hash manualmente...");
+        const testStr = SECRET_KEY + ":" + timestamp + ":" + nonce + ":" + data;
+        let testHash = 0;
+        for (let i = 0; i < Math.min(10, testStr.length); i++) {
+            const byte = testStr.charCodeAt(i);
+            testHash = (testHash * 33 + byte) >>> 0;
+            console.log(`  Paso ${i}: byte=${byte}, hash=${testHash.toString(16)}`);
+        }
     }
     
     return isValid;
@@ -77,33 +95,15 @@ function decodeRobloxData(encoded) {
     }
 }
 
-// Función para parsear body de diferentes formas
 async function parseRequestBody(req) {
     return new Promise((resolve) => {
         let rawData = '';
-        
-        req.on('data', chunk => {
-            rawData += chunk.toString();
-        });
-        
+        req.on('data', chunk => rawData += chunk.toString());
         req.on('end', () => {
             try {
-                // Intentar parsear como JSON
-                const parsed = JSON.parse(rawData);
-                resolve(parsed);
+                resolve(JSON.parse(rawData));
             } catch {
-                // Si no es JSON, intentar como URL encoded
-                try {
-                    const params = new URLSearchParams(rawData);
-                    const result = {};
-                    for (const [key, value] of params.entries()) {
-                        result[key] = value;
-                    }
-                    resolve(result);
-                } catch {
-                    // Devolver raw
-                    resolve({ raw: rawData });
-                }
+                resolve({ raw: rawData });
             }
         });
     });
@@ -111,7 +111,7 @@ async function parseRequestBody(req) {
 
 export default async function handler(req, res) {
     console.log("\n" + "=".repeat(80));
-    console.log("🔍 NUEVA PETICIÓN - DEBUG COMPLETO");
+    console.log("🔍 PETICIÓN RECIBIDA - HASH CORREGIDO");
     console.log("=".repeat(80));
     
     // CORS
@@ -129,98 +129,42 @@ export default async function handler(req, res) {
     }
     
     try {
-        // Obtener body RAW
         const rawBody = await parseRequestBody(req);
+        let body = rawBody.raw ? JSON.parse(rawBody.raw) : rawBody;
         
-        console.log("📦 BODY RECIBIDO (tipo):", typeof rawBody);
-        console.log("📦 BODY contenido:", rawBody);
+        console.log("✅ Campos recibidos:", Object.keys(body));
         
-        // Si es objeto con raw, extraer
-        let body = rawBody;
-        if (rawBody.raw && typeof rawBody.raw === 'string') {
-            try {
-                body = JSON.parse(rawBody.raw);
-                console.log("✅ Parseado desde raw string");
-            } catch (e) {
-                console.log("❌ No se pudo parsear como JSON:", e.message);
-            }
+        // Verificar campos
+        const required = ['p', 's', 'n', 't', 'v', 'c'];
+        const missing = required.filter(f => !body[f]);
+        
+        if (missing.length > 0) {
+            console.log("❌ Faltan:", missing);
+            return res.status(400).json({ error: 'Campos faltantes', missing });
         }
         
-        console.log("\n🔍 CAMPOS DISPONIBLES:", Object.keys(body));
+        console.log("🔍 Datos recibidos:");
+        console.log("  p:", body.p.substring(0, 50) + "...");
+        console.log("  s:", body.s);
+        console.log("  n:", body.n);
+        console.log("  t:", body.t);
+        console.log("  v:", body.v);
+        console.log("  c:", body.c);
         
-        // Verificar si tiene los campos necesarios
-        const hasAllFields = ['p', 's', 'n', 't', 'v', 'c'].every(field => body[field] !== undefined);
-        
-        if (!hasAllFields) {
-            console.log("❌ FALTAN CAMPOS:");
-            const missing = ['p', 's', 'n', 't', 'v', 'c'].filter(field => !body[field]);
-            console.log("   Missing:", missing);
-            
-            // Verificar nombres alternativos
-            console.log("\n🔍 BUSCANDO CAMPOS ALTERNATIVOS:");
-            const altNames = {
-                'payload': 'p',
-                'signature': 's', 
-                'nonce': 'n',
-                'timestamp': 't',
-                'version': 'v',
-                'client': 'c',
-                'client_id': 'c',
-                'cid': 'c'
-            };
-            
-            for (const [altName, stdName] of Object.entries(altNames)) {
-                if (body[altName] && !body[stdName]) {
-                    console.log(`   ${altName} -> ${stdName}: ${body[altName]}`);
-                    body[stdName] = body[altName];
-                }
-            }
-            
-            // Verificar nuevamente
-            const stillMissing = ['p', 's', 'n', 't', 'v', 'c'].filter(field => !body[field]);
-            if (stillMissing.length > 0) {
-                return res.status(400).json({ 
-                    error: 'Campos faltantes',
-                    missing: stillMissing,
-                    received: Object.keys(body)
-                });
-            }
-        }
-        
-        console.log("\n✅ TODOS LOS CAMPOS PRESENTES");
-        console.log("   p (payload):", body.p ? body.p.substring(0, 50) + "..." : "NO");
-        console.log("   s (signature):", body.s);
-        console.log("   n (nonce):", body.n);
-        console.log("   t (timestamp):", body.t);
-        console.log("   v (version):", body.v);
-        console.log("   c (client):", body.c);
-        
-        // Verificar versión y cliente
         if (body.v !== VERSION) {
-            return res.status(400).json({ 
-                error: 'Versión incorrecta',
-                expected: VERSION,
-                received: body.v
-            });
+            return res.status(400).json({ error: 'Versión incorrecta' });
         }
         
         if (body.c !== CLIENT_ID) {
-            return res.status(401).json({ 
-                error: 'Cliente no autorizado',
-                expected: CLIENT_ID,
-                received: body.c
-            });
+            return res.status(401).json({ error: 'Cliente no autorizado' });
         }
         
         // Verificar firma
         if (!verifySignature(body.p, body.s, body.t, body.n)) {
-            return res.status(401).json({ 
-                error: 'Firma inválida',
-                received: body.s
-            });
+            return res.status(401).json({ error: 'Firma inválida' });
         }
         
-        console.log("✅ FIRMA VÁLIDA");
+        console.log("🎉 FIRMA VÁLIDA - Procesando...");
         
         // Decodificar
         const decoded = decodeRobloxData(body.p);
@@ -228,36 +172,24 @@ export default async function handler(req, res) {
             return res.status(400).json({ error: 'Payload inválido' });
         }
         
-        console.log("📊 Datos decodificados:", decoded);
+        const brainrotData = decoded.data || decoded.d?.brainrot_data || decoded;
+        console.log("🎯 Brainrot:", brainrotData.animal, "-", brainrotData.value);
         
-        // Extraer datos del brainrot
-        let brainrotData = decoded.d?.brainrot_data || decoded.data || decoded;
-        
-        if (!brainrotData.animal || !brainrotData.value) {
-            return res.status(400).json({ error: 'Datos de brainrot incompletos' });
-        }
-        
-        console.log("\n🎯 BRAINROT:", brainrotData.animal, "- Valor:", brainrotData.value);
-        
-        // Enviar a Discord si hay webhook
+        // Enviar a Discord
         const discordWebhook = process.env.DISCORD_WEBHOOK_URL;
         if (discordWebhook) {
             const embed = {
-                title: brainrotData.title || `Brainrot encontrado! (${brainrotData.value})`,
-                description: `**${brainrotData.animal}** - ${brainrotData.rarity || "Desconocido"}`,
+                title: brainrotData.title || `Brainrot (${brainrotData.value})`,
+                description: `**${brainrotData.animal}** - ${brainrotData.rarity}`,
                 color: brainrotData.value >= 300 ? 16711680 : 16763904,
                 fields: [
-                    { name: '🧬 Generación', value: `\`\`\`${brainrotData.generation || "?"}\`\`\``, inline: true },
+                    { name: '🧬 Generación', value: `\`\`\`${brainrotData.generation}\`\`\``, inline: true },
                     { name: '📊 Valor', value: `\`\`\`${Number(brainrotData.value).toLocaleString()}\`\`\``, inline: true },
-                    { name: '👥 Jugadores', value: `\`\`\`${brainrotData.players || 0}/8\`\`\``, inline: true }
+                    { name: '👥 Jugadores', value: `\`\`\`${brainrotData.players}/8\`\`\``, inline: true }
                 ],
                 footer: { text: `zl an • ${new Date().toLocaleDateString()}` },
                 timestamp: new Date().toISOString()
             };
-            
-            if (brainrotData.image_url) {
-                embed.thumbnail = { url: brainrotData.image_url };
-            }
             
             try {
                 await fetch(discordWebhook, {
@@ -271,19 +203,15 @@ export default async function handler(req, res) {
             }
         }
         
-        // Responder éxito
         return res.status(200).json({ 
             success: true,
-            message: "Procesado correctamente",
+            message: "Procesado",
             animal: brainrotData.animal,
             value: brainrotData.value
         });
         
     } catch (error) {
         console.error("🔥 ERROR:", error);
-        return res.status(500).json({ 
-            error: "Error interno",
-            message: error.message
-        });
+        return res.status(500).json({ error: "Error interno", message: error.message });
     }
 }
