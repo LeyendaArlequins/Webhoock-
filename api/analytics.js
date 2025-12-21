@@ -19,22 +19,23 @@ function cleanupOldNonces() {
 }
 
 // Función FNV hash (debe coincidir con el script)
+// Función FNV hash CORREGIDA para ser compatible con Lua
+// Función FNV hash CORREGIDA para ser compatible con Lua
 function fnv32aHash(str) {
     let hash = 2166136261; // FNV offset basis
     for (let i = 0; i < str.length; i++) {
         const byte = str.charCodeAt(i);
-        hash ^= byte;
-        hash += (hash << 1) + (hash << 4) + (hash << 7) + (hash << 8) + (hash << 24);
-        hash = hash >>> 0; // Convertir a unsigned 32-bit
+        hash = hash ^ byte;  // XOR simple
+        hash = (hash * 16777619) >>> 0;  // Multiplicar por FNV prime y mantener unsigned
     }
     return hash;
 }
 
-// Generar firma esperada (debe coincidir con el script)
+// Generar firma esperada (COMPATIBLE con Lua)
 function generateExpectedSignature(data, timestamp, nonce) {
     const toSign = SECRET_KEY + ":" + timestamp + ":" + nonce + ":" + data;
     
-    // Primer hash FNV
+    // Primer hash FNV (compatible)
     let hash = fnv32aHash(toSign);
     let hex = hash.toString(16).padStart(8, '0');
     
