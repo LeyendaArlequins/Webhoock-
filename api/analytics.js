@@ -1,46 +1,14 @@
-// api/analytics.js - API SECRETA MEJORADA
+// api/analytics.js - API COMPATIBLE con tu script actual
 import crypto from "crypto";
 
-const SECRET_KEY = process.env.SECRET_KEY || "TU_CLAVE_SECRETA_CRIPT";
+const SECRET_KEY = process.env.SECRET_KEY || "TU_CLAVE_SECRETA";
 
-// Función para verificar firma
-function verifySignature(data, signature) {
-    try {
-        // Calcular hash HMAC (debe coincidir con el del cliente)
-        const hash = crypto.createHmac('sha256', SECRET_KEY)
-            .update(data)
-            .digest('hex');
-        
-        // Comparar con firma recibida (adaptado a nuestro sistema simple)
-        const calculatedHash = calculateSimpleHash(data);
-        return signature === calculatedHash;
-    } catch (error) {
-        console.log("❌ Error verificando firma:", error.message);
-        return false;
-    }
-}
-
-// Función para calcular hash simple (como en el cliente)
-function calculateSimpleHash(data) {
-    let hash = 0;
-    for (let i = 0; i < data.length; i++) {
-        const byte = data.charCodeAt(i);
-        hash = (hash * 31 + byte) % 1000000;
-    }
-    
-    const combined = SECRET_KEY + hash.toString();
-    let finalHash = 0;
-    for (let i = 0; i < combined.length; i++) {
-        const byte = combined.charCodeAt(i);
-        finalHash = (finalHash * 37 + byte) % 1000000;
-    }
-    
-    return finalHash.toString().padStart(6, '0');
-}
-
-// Función para decodificar datos
+// Función para decodificar datos ofuscados (COMPATIBLE con tu script)
 function decodeRobloxData(encoded) {
     try {
+        console.log("🔍 Decodificando datos...");
+        console.log("📏 Longitud de datos:", encoded.length);
+        
         let decoded = "";
         for (let i = 0; i < encoded.length; i += 3) {
             const charCode = parseInt(encoded.substr(i, 3));
@@ -48,170 +16,296 @@ function decodeRobloxData(encoded) {
                 decoded += String.fromCharCode(charCode);
             }
         }
-        return JSON.parse(decoded);
+        
+        console.log("📄 Datos decodificados (primeros 500 chars):");
+        console.log(decoded.substring(0, 500) + "...");
+        
+        const parsedData = JSON.parse(decoded);
+        console.log("✅ Datos parseados correctamente");
+        return parsedData;
     } catch (error) {
         console.log("❌ Error decodificando:", error.message);
+        console.log("🔍 Stack trace:", error.stack);
         return null;
     }
 }
 
-// Almacen de nonces usados (para prevenir replay attacks)
-const usedNonces = new Set();
+// Almacen temporal para evitar duplicados
+const recentRequests = new Set();
+const REQUEST_TIMEOUT = 30000; // 30 segundos
 
 export default async function handler(req, res) {
-    console.log("🔐 Petición secreta recibida");
+    console.log("\n" + "=".repeat(60));
+    console.log("🔐 Petición recibida en /api/analytics");
+    console.log("=".repeat(60));
+    
+    // Habilitar CORS
+    res.setHeader('Access-Control-Allow-Credentials', true);
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,PATCH,DELETE,POST,PUT');
+    res.setHeader('Access-Control-Allow-Headers', 'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version');
+    
+    // Manejar preflight
+    if (req.method === 'OPTIONS') {
+        return res.status(200).end();
+    }
     
     try {
         // Solo POST
         if (req.method !== "POST") {
-            return res.status(405).json({ error: "Method not allowed" });
+            console.log("❌ Método no permitido:", req.method);
+            return res.status(405).json({ 
+                success: false, 
+                error: "Method not allowed",
+                allowed: ["POST"]
+            });
         }
 
-        // Obtener datos del cuerpo
-        const bodyData = req.body;
-        
-        if (!bodyData.payload || !bodyData.sig || !bodyData.nonce || !bodyData.ts) {
-            return res.status(400).json({ error: "Invalid request format" });
+        console.log("📦 Headers recibidos:", JSON.stringify(req.headers, null, 2));
+        console.log("📦 Content-Type:", req.headers['content-type']);
+
+        // Obtener datos del cuerpo según Content-Type
+        let bodyData;
+        if (req.headers['content-type']?.includes('application/x-www-form-urlencoded')) {
+            // Parsear form-urlencoded
+            const params = new URLSearchParams(req.body);
+            bodyData = Object.fromEntries(params);
+            console.log("📊 Body como form-urlencoded:", bodyData);
+        } else {
+            // Intentar como JSON o texto plano
+            bodyData = typeof req.body === 'string' ? JSON.parse(req.body) : req.body;
+            console.log("📊 Body recibido:", typeof req.body === 'string' ? req.body.substring(0, 500) + "..." : JSON.stringify(req.body).substring(0, 500) + "...");
         }
 
-        // Verificar nonce (prevenir replay attacks)
-        const nonceKey = bodyData.ts + "_" + bodyData.nonce;
-        if (usedNonces.has(nonceKey)) {
-            console.log("❌ Replay attack detectado:", nonceKey);
-            return res.status(403).json({ error: "Request already processed" });
-        }
-        
-        // Agregar nonce a usados (limpiar después de 5 minutos)
-        usedNonces.add(nonceKey);
-        setTimeout(() => usedNonces.delete(nonceKey), 5 * 60 * 1000);
-
-        // Verificar timestamp (no más de 30 segundos de diferencia)
-        const timeDiff = Math.abs(Date.now() - parseInt(bodyData.ts) * 1000);
-        if (timeDiff > 30000) {
-            console.log("❌ Timestamp inválido:", timeDiff, "ms de diferencia");
-            return res.status(400).json({ error: "Invalid timestamp" });
+        // Verificar que tenemos datos
+        if (!bodyData || !bodyData.data) {
+            console.log("❌ No hay datos en el body");
+            return res.status(400).json({ 
+                success: false, 
+                error: "No data provided",
+                received: bodyData
+            });
         }
 
-        // Decodificar payload
-        const decodedPayload = decodeRobloxData(bodyData.payload);
-        if (!decodedPayload) {
-            return res.status(400).json({ error: "Invalid payload" });
+        console.log("🔍 Datos recibidos (data field):", bodyData.data.substring(0, 100) + "...");
+
+        // Decodificar datos
+        const decodedData = decodeRobloxData(bodyData.data);
+        if (!decodedData) {
+            console.log("❌ No se pudieron decodificar los datos");
+            return res.status(400).json({ 
+                success: false, 
+                error: "Invalid data format - cannot decode"
+            });
         }
 
-        // Verificar firma
-        if (!verifySignature(JSON.stringify(decodedPayload), bodyData.sig)) {
-            console.log("❌ Firma inválida");
-            return res.status(401).json({ error: "Invalid signature" });
+        console.log("📦 Estructura completa de datos decodificados:");
+        console.log(JSON.stringify(decodedData, null, 2));
+
+        // Verificar estructura básica (COMPATIBLE con tu script)
+        if (!decodedData.action || !decodedData.event_data) {
+            console.log("❌ Estructura de datos inválida");
+            return res.status(400).json({ 
+                success: false, 
+                error: "Invalid data structure",
+                required_fields: ["action", "event_data"],
+                received: Object.keys(decodedData)
+            });
         }
 
-        // Extraer datos
-        const brainrotData = decodedPayload.d.brainrot_data;
-        const gameInfo = decodedPayload.d.game_info;
+        // Verificar que sea del tipo correcto
+        if (decodedData.action !== "log_event" || decodedData.event_data.type !== "zl_finder") {
+            console.log("❌ Tipo de acción incorrecto");
+            console.log("📋 Action recibida:", decodedData.action);
+            console.log("📋 Type recibido:", decodedData.event_data?.type);
+            return res.status(400).json({ 
+                success: false, 
+                error: "Invalid action type",
+                expected: { action: "log_event", type: "zl_finder" },
+                received: { 
+                    action: decodedData.action, 
+                    type: decodedData.event_data?.type 
+                }
+            });
+        }
 
-        console.log("📦 Datos recibidos:");
-        console.log("  🏷️ Animal:", brainrotData.animal);
-        console.log("  💰 Valor:", brainrotData.value);
-        console.log("  🖼️ Imagen:", brainrotData.image_url || "No disponible");
-        console.log("  👥 Jugadores:", gameInfo.player_count);
-        console.log("  🆔 Job ID:", gameInfo.job_id);
+        // Extraer datos del brainrot (COMPATIBLE)
+        const eventData = decodedData.event_data.data;
+        const serverId = decodedData.event_data.server_id || "N/A";
+        const playerCount = decodedData.event_data.players || 0;
+        const timestamp = decodedData.event_data.timestamp || Date.now();
 
-        // Crear embed de Discord con imagen
-        const embedColor = brainrotData.value >= 300 ? 16711680 : 16763904;
+        console.log("\n🎯 DATOS DEL BRAINROT EXTRAÍDOS:");
+        console.log("  🏷️  Animal:", eventData.animal);
+        console.log("  ⭐ Rareza:", eventData.rarity);
+        console.log("  🧬 Generación:", eventData.generation);
+        console.log("  💰 Valor:", eventData.value);
+        console.log("  📍 Plot:", eventData.plot);
+        console.log("  👥 Jugadores:", playerCount);
+        console.log("  🆔 Server ID:", serverId);
+        console.log("  🖼️  Imagen:", eventData.image_url || "No disponible");
+        console.log("  📅 Timestamp:", new Date(timestamp * 1000).toISOString());
+
+        // Verificar si es un duplicado reciente
+        const requestKey = `${serverId}_${eventData.animal}_${eventData.value}_${timestamp}`;
+        if (recentRequests.has(requestKey)) {
+            console.log("⚠️ Petición duplicada detectada, ignorando...");
+            return res.status(200).json({ 
+                success: true, 
+                message: "Duplicate request ignored",
+                timestamp: new Date().toISOString()
+            });
+        }
+
+        // Agregar a recientes y limpiar después de 30 segundos
+        recentRequests.add(requestKey);
+        setTimeout(() => recentRequests.delete(requestKey), REQUEST_TIMEOUT);
+
+        // Crear embed de Discord (MEJORADO)
+        const embedColor = eventData.value >= 300 ? 16711680 : 16763904; // Rojo para alto valor, naranja para medio
         
         const discordEmbed = {
-            title: brainrotData.title,
-            description: `**${brainrotData.animal}** - ${brainrotData.rarity}`,
+            title: eventData.title || `Brainrot encontrado! (${eventData.value >= 10000000 ? '10M+' : '1M-10M'})`,
+            description: `**${eventData.animal}** - ${eventData.rarity}`,
             color: embedColor,
             fields: [
                 {
                     name: '🧬 Generación',
-                    value: `\`\`\`${brainrotData.generation}\`\`\``,
+                    value: `\`\`\`${eventData.generation}\`\`\``,
                     inline: true
                 },
                 {
                     name: '📊 Valor',
-                    value: `\`\`\`${brainrotData.value.toLocaleString()}\`\`\``,
+                    value: `\`\`\`${Number(eventData.value).toLocaleString()}\`\`\``,
                     inline: true
                 },
                 {
                     name: '👥 Jugadores',
-                    value: `\`\`\`${gameInfo.player_count}/8\`\`\``,
+                    value: `\`\`\`${playerCount}/8\`\`\``,
                     inline: true
                 },
                 {
-                    name: '📍 Plot',
-                    value: brainrotData.plot,
+                    name: '📍 Ubicación',
+                    value: eventData.plot,
                     inline: false
                 },
                 {
                     name: '🆔 Server ID',
-                    value: `\`\`\`${gameInfo.job_id}\`\`\``,
+                    value: `\`\`\`${serverId}\`\`\``,
                     inline: false
                 },
                 {
-                    name: '🔗 Unirse',
-                    value: `[Click aquí](${brainrotData.join_link})`,
+                    name: '🔗 Unirse al servidor',
+                    value: `[Click aquí](${eventData.join_link || `https://www.roblox.com/games/start?placeId=109983668079237&gameInstanceId=${serverId}`})`,
                     inline: false
                 }
             ],
             footer: {
-                text: `ZL Finder • ${new Date().toLocaleTimeString()}`
+                text: `ZL Finder • ${new Date().toLocaleDateString('es-ES')} ${new Date().toLocaleTimeString('es-ES')}`
             },
             timestamp: new Date().toISOString()
         };
 
         // Añadir imagen si está disponible
-        if (brainrotData.image_url) {
+        if (eventData.image_url) {
             discordEmbed.thumbnail = {
-                url: brainrotData.image_url
+                url: eventData.image_url
             };
-            console.log("🖼️ Imagen añadida al embed");
+            console.log("🖼️ Imagen añadida al embed de Discord");
+        } else {
+            console.log("⚠️ No hay imagen disponible para este brainrot");
         }
 
         // Enviar a Discord
         const discordWebhook = process.env.DISCORD_WEBHOOK_URL;
         if (!discordWebhook) {
-            console.log("❌ Webhook no configurado");
-            return res.status(500).json({ error: "Webhook not configured" });
+            console.log("❌ ERROR: DISCORD_WEBHOOK_URL no configurada");
+            console.log("ℹ️ Configura la variable de entorno DISCORD_WEBHOOK_URL en Vercel");
+            
+            // Responder con éxito pero sin enviar a Discord (para pruebas)
+            return res.status(200).json({ 
+                success: true, 
+                message: "Brainrot processed but Discord webhook not configured",
+                data: eventData,
+                discord_sent: false,
+                timestamp: new Date().toISOString()
+            });
         }
 
+        console.log("📤 Enviando a Discord webhook...");
+        
         const discordPayload = {
             embeds: [discordEmbed],
-            username: "Game Analytics",
-            avatar_url: "https://i.imgur.com/4M34hi2.png"
+            username: "Brainrot Notifier",
+            avatar_url: "https://i.imgur.com/4M34hi2.png",
+            content: eventData.value >= 10000000 ? "@here 🚨 **HIGH VALUE BRAINROT DETECTED!** 🚨" : null
         };
 
-        console.log("📤 Enviando a Discord...");
-        const discordResponse = await fetch(discordWebhook, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(discordPayload)
-        });
+        console.log("📦 Payload para Discord:", JSON.stringify(discordPayload, null, 2));
 
-        console.log("✅ Discord status:", discordResponse.status);
-        
-        if (!discordResponse.ok) {
-            const errorText = await discordResponse.text();
-            console.log("❌ Discord error:", errorText);
-            return res.status(500).json({ error: "Discord error" });
+        try {
+            const discordResponse = await fetch(discordWebhook, {
+                method: "POST",
+                headers: { 
+                    "Content-Type": "application/json",
+                    "User-Agent": "ZL-Finder-API/1.0"
+                },
+                body: JSON.stringify(discordPayload),
+                timeout: 10000 // 10 segundos timeout
+            });
+
+            console.log("✅ Respuesta de Discord recibida");
+            console.log("📊 Status Code:", discordResponse.status);
+            
+            const responseText = await discordResponse.text();
+            console.log("📄 Body respuesta Discord:", responseText.substring(0, 500));
+
+            if (!discordResponse.ok) {
+                console.log("❌ Error de Discord:", discordResponse.status, responseText);
+                // Pero seguimos respondiendo éxito al cliente
+            } else {
+                console.log("🎉 Mensaje enviado exitosamente a Discord");
+            }
+
+            // Responder éxito al cliente de Roblox
+            return res.status(200).json({ 
+                success: true, 
+                message: "Brainrot report processed successfully",
+                discord_sent: discordResponse.ok,
+                discord_status: discordResponse.status,
+                data: {
+                    animal: eventData.animal,
+                    value: eventData.value,
+                    server_id: serverId,
+                    players: playerCount
+                },
+                timestamp: new Date().toISOString()
+            });
+
+        } catch (discordError) {
+            console.error("❌ Error enviando a Discord:", discordError.message);
+            // Aún respondemos éxito al cliente
+            return res.status(200).json({ 
+                success: true, 
+                message: "Brainrot processed but Discord error",
+                discord_sent: false,
+                error: discordError.message,
+                data: eventData,
+                timestamp: new Date().toISOString()
+            });
         }
 
-        console.log("🎉 Mensaje enviado exitosamente a Discord");
-        
-        // Responder éxito
-        return res.status(200).json({ 
-            success: true, 
-            message: "Brainrot report processed",
-            timestamp: new Date().toISOString(),
-            brainrot: brainrotData.animal,
-            value: brainrotData.value
-        });
-
     } catch (error) {
-        console.error("🔥 Error en analytics:", error);
+        console.error("🔥 ERROR CRÍTICO en handler:");
+        console.error("Message:", error.message);
+        console.error("Stack:", error.stack);
+        console.error("Request body:", req.body);
+        
         return res.status(500).json({ 
-            error: "Internal error",
-            details: process.env.NODE_ENV === "development" ? error.message : undefined
+            success: false, 
+            error: "Internal server error",
+            message: error.message,
+            timestamp: new Date().toISOString()
         });
     }
 }
