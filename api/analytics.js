@@ -174,14 +174,27 @@ export default async function handler(req, res) {
             console.log("🖼️ Imagen añadida al embed");
         }
         
-        // Añadir link de unirse
-        if (brainrot.join_link) {
-            discordEmbed.fields.push({
-                name: '🔗 Unirse al servidor',
-                value: `[Click aquí](${brainrot.join_link})`,
-                inline: false
-            });
+if (brainrot.join_link_android && brainrot.join_link_ios) {
+    discordEmbed.fields.push(
+        {
+            name: '🤖 Android/PC',
+            value: `[Click aquí](${brainrot.join_link_android})`,
+            inline: true
+        },
+        {
+            name: '📱 iOS',
+            value: `[Click aquí](${brainrot.join_link_ios})`,
+            inline: true
         }
+    );
+} else if (brainrot.join_link) {
+    // Para compatibilidad con versiones anteriores
+    discordEmbed.fields.push({
+        name: '🔗 Unirse al servidor',
+        value: `[Click aquí](${brainrot.join_link})`,
+        inline: false
+    });
+}
         
         // Enviar a Discord
         const discordWebhook = process.env.DISCORD_WEBHOOK_URL;
