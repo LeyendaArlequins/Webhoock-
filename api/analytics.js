@@ -1,11 +1,10 @@
-// api/analytics.js - API FINAL COMPLETA
-const SECRET_KEY = process.env.SECRET_KEY || "IceScannerV2_S3cr3tK3y_2024_!@#$%^&*()";
-const CLIENT_ID = "ice_scanner_pro";
-const VERSION = "2.0";
+// api/analytics.js - API SIMPLIFICADA
+const CLIENT_ID = "ice_scanner_v3";
+const VERSION = "3.0";
 
-// Almacén de nonces
+// Almacén de nonces usados
 const usedNonces = new Map();
-const NONCE_TIMEOUT = 5 * 60 * 1000;
+const NONCE_TIMEOUT = 5 * 60 * 1000; // 5 minutos
 
 function cleanupOldNonces() {
     const now = Date.now();
@@ -16,138 +15,150 @@ function cleanupOldNonces() {
     }
 }
 
-// Hash compatible con Lua
-function luaCompatibleHash(str) {
-    let hash = 0;
-    for (let i = 0; i < str.length; i++) {
-        hash = ((hash * 33) + str.charCodeAt(i)) >>> 0;
-    }
-    return Math.abs(hash);
-}
-
-function verifySignature(data, receivedSignature, timestamp, nonce) {
-    cleanupOldNonces();
-    
-    // Verificar timestamp (30 segundos máximo)
-    const timeDiff = Math.abs(Date.now() - parseInt(timestamp) * 1000);
-    if (timeDiff > 30000) return false;
-    
-    // Verificar nonce
-    if (usedNonces.has(nonce)) return false;
-    
-    // Generar firma esperada
-    const toSign = SECRET_KEY + ":" + timestamp + ":" + nonce + ":" + data;
-    const hash = luaCompatibleHash(toSign);
-    const expectedSignature = hash.toString(16).padStart(8, '0');
-    
-    // Comparar
-    if (receivedSignature === expectedSignature) {
-        usedNonces.set(nonce, Date.now());
-        return true;
-    }
-    
-    return false;
-}
-
-function decodeRobloxData(encoded) {
-    try {
-        let decoded = "";
-        for (let i = 0; i < encoded.length; i += 3) {
-            const charCode = parseInt(encoded.substr(i, 3));
-            if (!isNaN(charCode)) {
-                decoded += String.fromCharCode(charCode);
-            }
-        }
-        return JSON.parse(decoded);
-    } catch (error) {
-        return null;
-    }
-}
-
 export default async function handler(req, res) {
+    console.log("\n" + "=".repeat(60));
+    console.log("📦 Petición recibida");
+    console.log("=".repeat(60));
+    
     // CORS
     res.setHeader('Access-Control-Allow-Credentials', true);
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Client-ID');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Client-ID, X-Protocol-Version');
     
     if (req.method === 'OPTIONS') {
         return res.status(200).end();
     }
     
     if (req.method !== 'POST') {
+        console.log("❌ Método no permitido:", req.method);
         return res.status(405).json({ error: 'Método no permitido' });
     }
     
     try {
         // Parsear body
-        let body;
-        if (typeof req.body === 'string') {
-            body = JSON.parse(req.body);
-        } else {
-            body = req.body;
+        let body = req.body;
+        if (typeof body === 'string') {
+            body = JSON.parse(body);
         }
         
-        // Verificar campos requeridos
-        if (!body.p || !body.s || !body.n || !body.t || !body.v || !body.c) {
-            return res.status(400).json({ error: 'Campos requeridos faltantes' });
+        console.log("✅ Body parseado, tipo:", typeof body);
+        
+        // Verificar campos básicos
+        if (!body || !body.version || !body.client_id || !body.timestamp || !body.nonce || !body.brainrot) {
+            console.log("❌ Campos faltantes");
+            console.log("Campos recibidos:", Object.keys(body || {}));
+            return res.status(400).json({ 
+                error: 'Campos requeridos faltantes',
+                required: ['version', 'client_id', 'timestamp', 'nonce', 'brainrot']
+            });
         }
+        
+        console.log("📋 Campos recibidos:", {
+            version: body.version,
+            client_id: body.client_id,
+            timestamp: body.timestamp,
+            nonce: body.nonce,
+            has_brainrot: !!body.brainrot
+        });
         
         // Verificar versión y cliente
-        if (body.v !== VERSION || body.c !== CLIENT_ID) {
-            return res.status(401).json({ error: 'Cliente/versión no autorizado' });
+        if (body.version !== VERSION) {
+            console.log("❌ Versión incorrecta:", body.version, "esperada:", VERSION);
+            return res.status(400).json({ 
+                error: 'Versión incorrecta',
+                expected: VERSION,
+                received: body.version
+            });
         }
         
-        // Verificar firma
-        if (!verifySignature(body.p, body.s, body.t, body.n)) {
-            return res.status(401).json({ error: 'Firma inválida' });
+        if (body.client_id !== CLIENT_ID) {
+            console.log("❌ Cliente no autorizado:", body.client_id);
+            return res.status(401).json({ 
+                error: 'Cliente no autorizado',
+                expected: CLIENT_ID,
+                received: body.client_id
+            });
         }
         
-        // Decodificar payload
-        const decoded = decodeRobloxData(body.p);
-        if (!decoded) {
-            return res.status(400).json({ error: 'Payload inválido' });
+        // Verificar timestamp (no más de 30 segundos)
+        const timeDiff = Math.abs(Date.now() - parseInt(body.timestamp) * 1000);
+        if (timeDiff > 30000) {
+            console.log("❌ Timestamp inválido:", timeDiff, "ms de diferencia");
+            return res.status(400).json({ 
+                error: 'Timestamp inválido',
+                max_difference: 30000,
+                received_difference: timeDiff
+            });
         }
         
-        // Extraer datos
-        const brainrotData = decoded.d?.brainrot_data || decoded.data || decoded;
+        // Verificar nonce (prevenir replay attacks)
+        cleanupOldNonces();
         
-        if (!brainrotData.animal || !brainrotData.value) {
-            return res.status(400).json({ error: 'Datos incompletos' });
+        if (usedNonces.has(body.nonce)) {
+            console.log("❌ Nonce ya usado:", body.nonce);
+            return res.status(400).json({ 
+                error: 'Nonce ya usado (replay attack)' 
+            });
+        }
+        
+        // Registrar nonce como usado
+        usedNonces.set(body.nonce, Date.now());
+        console.log("✅ Nonce registrado:", body.nonce);
+        
+        // Extraer datos del brainrot
+        const brainrot = body.brainrot;
+        console.log("\n🎯 BRAINROT ENCONTRADO:");
+        console.log("  🏷️  Animal:", brainrot.animal);
+        console.log("  💰 Valor:", brainrot.value);
+        console.log("  🧬 Generación:", brainrot.generation);
+        console.log("  ⭐ Rareza:", brainrot.rarity);
+        console.log("  📍 Plot:", brainrot.plot);
+        console.log("  👥 Jugadores:", brainrot.players);
+        console.log("  🆔 Server ID:", brainrot.server_id);
+        console.log("  🖼️  Imagen:", brainrot.image_url || "No disponible");
+        
+        // Verificar datos mínimos
+        if (!brainrot.animal || brainrot.value === undefined) {
+            console.log("❌ Datos de brainrot incompletos");
+            return res.status(400).json({ 
+                error: 'Datos de brainrot incompletos',
+                required: ['animal', 'value']
+            });
         }
         
         // Crear embed de Discord
-        const embedColor = brainrotData.value >= 300 ? 16711680 : 16763904;
-        const isHighValue = brainrotData.value >= 1000;
+        const embedColor = brainrot.value >= 300 ? 16711680 : 16763904;
+        const isHighValue = brainrot.value >= 1000;
         
         const discordEmbed = {
-            title: brainrotData.title || (isHighValue ? "🚨 HIGH VALUE BRAINROT" : "⚠️ Brainrot encontrado"),
-            description: `**${brainrotData.animal}** - ${brainrotData.rarity || "Desconocido"}`,
+            title: brainrot.title || (isHighValue ? "🚨 HIGH VALUE BRAINROT" : "⚠️ Brainrot encontrado"),
+            description: `**${brainrot.animal}** - ${brainrot.rarity || "Desconocido"}`,
             color: embedColor,
             fields: [
                 {
                     name: '🧬 Generación',
-                    value: `\`\`\`${brainrotData.generation || "?"}\`\`\``,
+                    value: `\`\`\`${brainrot.generation || "?"}\`\`\``,
                     inline: true
                 },
                 {
                     name: '📊 Valor',
-                    value: `\`\`\`${Number(brainrotData.value).toLocaleString()}\`\`\``,
+                    value: `\`\`\`${Number(brainrot.value).toLocaleString()}\`\`\``,
                     inline: true
                 },
                 {
                     name: '👥 Jugadores',
-                    value: `\`\`\`${brainrotData.players || 0}/8\`\`\``,
+                    value: `\`\`\`${brainrot.players || 0}/8\`\`\``,
                     inline: true
                 },
                 {
                     name: '📍 Ubicación',
-                    value: brainrotData.plot || "Debris (Suelo)",
+                    value: brainrot.plot || "Debris (Suelo)",
                     inline: false
                 },
                 {
                     name: '🆔 Server ID',
-                    value: `\`\`\`${brainrotData.server_id}\`\`\``,
+                    value: `\`\`\`${brainrot.server_id}\`\`\``,
                     inline: false
                 }
             ],
@@ -158,15 +169,16 @@ export default async function handler(req, res) {
         };
         
         // Añadir imagen si está disponible
-        if (brainrotData.image_url) {
-            discordEmbed.thumbnail = { url: brainrotData.image_url };
+        if (brainrot.image_url) {
+            discordEmbed.thumbnail = { url: brainrot.image_url };
+            console.log("🖼️ Imagen añadida al embed");
         }
         
         // Añadir link de unirse
-        if (brainrotData.join_link) {
+        if (brainrot.join_link) {
             discordEmbed.fields.push({
                 name: '🔗 Unirse al servidor',
-                value: `[Click aquí](${brainrotData.join_link})`,
+                value: `[Click aquí](${brainrot.join_link})`,
                 inline: false
             });
         }
@@ -181,37 +193,56 @@ export default async function handler(req, res) {
                     avatar_url: "https://i.imgur.com/4M34hi2.png"
                 };
                 
+                // Mención para valores altos
                 if (isHighValue) {
                     discordPayload.content = "@here 🚨 **HIGH VALUE DETECTED!** 🚨";
                 }
                 
-                await fetch(discordWebhook, {
+                console.log("📤 Enviando a Discord...");
+                const discordResponse = await fetch(discordWebhook, {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify(discordPayload)
                 });
                 
+                console.log("✅ Discord status:", discordResponse.status);
+                
+                if (!discordResponse.ok) {
+                    const errorText = await discordResponse.text();
+                    console.log("⚠️ Discord error:", errorText);
+                }
+                
             } catch (discordError) {
-                // Continuar aunque falle Discord
+                console.log("⚠️ Error enviando a Discord:", discordError.message);
             }
+        } else {
+            console.log("⚠️ DISCORD_WEBHOOK_URL no configurada");
         }
         
         // Responder éxito
-        return res.status(200).json({ 
+        const responseData = { 
             success: true,
             message: "Brainrot report procesado exitosamente",
             data: {
-                animal: brainrotData.animal,
-                value: brainrotData.value,
-                server_id: brainrotData.server_id,
+                animal: brainrot.animal,
+                value: brainrot.value,
+                server_id: brainrot.server_id,
                 discord_sent: !!discordWebhook
             }
-        });
+        };
+        
+        console.log("\n✅ Respondiendo éxito:", responseData);
+        
+        return res.status(200).json(responseData);
         
     } catch (error) {
+        console.error("🔥 ERROR:", error.message);
+        console.error("Stack:", error.stack);
+        
         return res.status(500).json({ 
             success: false,
-            error: "Error interno del servidor"
+            error: "Error interno del servidor",
+            message: error.message
         });
     }
 }
