@@ -128,8 +128,8 @@ export default async function handler(req, res) {
         }
         
         // Crear embed de Discord
-        const embedColor = brainrot.value >= 300 ? 16711680 : 16763904;
-        const isHighValue = brainrot.value >= 1000;
+        const embedColor = brainrot.value >= 3000000 ? 16711680 : 16763904;
+        const isHighValue = brainrot.value >= 10000000;
         
         const discordEmbed = {
             title: brainrot.title || (isHighValue ? "🚨 HIGH VALUE BRAINROT" : "⚠️ Brainrot encontrado"),
