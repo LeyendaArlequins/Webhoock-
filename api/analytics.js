@@ -181,7 +181,7 @@ export default async function handler(req, res) {
         if (gameInstanceId) {
             // Construir los enlaces
             const androidLink = `https://www.roblox.com/games/start?placeId=${placeId}&gameInstanceId=${gameInstanceId}`;
-            const iosLink = `https://chillihub1.github.io/chillihub-joiner/placeId=${placeId}&gameInstanceId=${gameInstanceId}`;
+            const iosLink = `https://chillihub1.github.io/chillihub-joiner/?placeId=${placeId}&gameInstanceId=${gameInstanceId}`;
             
             console.log("🔗 Enlaces generados:");
             console.log("  Android/PC:", androidLink);
