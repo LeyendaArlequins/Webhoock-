@@ -174,27 +174,55 @@ export default async function handler(req, res) {
             console.log("🖼️ Imagen añadida al embed");
         }
         
-if (brainrot.join_link_android && brainrot.join_link_ios) {
-    discordEmbed.fields.push(
-        {
-            name: '🤖 Android/PC',
-            value: `[Click aquí](${brainrot.join_link_android})`,
-            inline: true
-        },
-        {
-            name: '📱 iOS',
-            value: `[Click aquí](${brainrot.join_link_ios})`,
-            inline: true
+        // ================ AÑADIR ENLACES COMO QUIERES ================
+        const placeId = "109983668079237";
+        const gameInstanceId = brainrot.game_instance_id || brainrot.server_id;
+        
+        if (gameInstanceId) {
+            // Construir los enlaces
+            const androidLink = `https://www.roblox.com/games/start?placeId=${placeId}&gameInstanceId=${gameInstanceId}`;
+            const iosLink = `https://chillihub1.github.io/chillihub-joiner/placeId=${placeId}&gameInstanceId=${gameInstanceId}`;
+            
+            console.log("🔗 Enlaces generados:");
+            console.log("  Android/PC:", androidLink);
+            console.log("  iOS:", iosLink);
+            
+            // Añadir los dos campos EXACTAMENTE como quieres
+            discordEmbed.fields.push(
+                {
+                    name: '🔗 Unirse al servidor',
+                    value: `[Click aquí](${androidLink})`,
+                    inline: false
+                },
+                {
+                    name: '🔗 Unirse al servidor iOS',
+                    value: `[Click aquí](${iosLink})`,
+                    inline: false
+                }
+            );
+        } else if (brainrot.join_link_android && brainrot.join_link_ios) {
+            // Para compatibilidad con versiones anteriores que ya envían los enlaces
+            discordEmbed.fields.push(
+                {
+                    name: '🔗 Unirse al servidor',
+                    value: `[Click aquí](${brainrot.join_link_android})`,
+                    inline: false
+                },
+                {
+                    name: '🔗 Unirse al servidor iOS',
+                    value: `[Click aquí](${brainrot.join_link_ios})`,
+                    inline: false
+                }
+            );
+        } else if (brainrot.join_link) {
+            // Para compatibilidad con versiones muy anteriores
+            discordEmbed.fields.push({
+                name: '🔗 Unirse al servidor',
+                value: `[Click aquí](${brainrot.join_link})`,
+                inline: false
+            });
         }
-    );
-} else if (brainrot.join_link) {
-    // Para compatibilidad con versiones anteriores
-    discordEmbed.fields.push({
-        name: '🔗 Unirse al servidor',
-        value: `[Click aquí](${brainrot.join_link})`,
-        inline: false
-    });
-}
+        // ================ FIN DE LA SECCIÓN DE ENLACES ================
         
         // Enviar a Discord
         const discordWebhook = process.env.DISCORD_WEBHOOK_URL;
