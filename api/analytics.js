@@ -163,7 +163,7 @@ export default async function handler(req, res) {
                 }
             ],
             footer: {
-                text: `zl an • ${new Date().toLocaleDateString('es-ES')}`
+                text: `zl anly • ${new Date().toLocaleDateString('es-ES')}`
             },
             timestamp: new Date().toISOString()
         };
