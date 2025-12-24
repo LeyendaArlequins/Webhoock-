@@ -230,7 +230,7 @@ export default async function handler(req, res) {
             try {
                 const discordPayload = {
                     embeds: [discordEmbed],
-                    username: "Ice Scanner Pro",
+                    username: "Z L |  Finter",
                     avatar_url: "https://i.imgur.com/4M34hi2.png"
                 };
                 
