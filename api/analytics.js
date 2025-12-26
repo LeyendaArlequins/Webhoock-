@@ -273,7 +273,7 @@ if (discordWebhooks.length > 0) {
                 animal: brainrot.animal,
                 value: brainrot.value,
                 server_id: brainrot.server_id,
-                discord_sent: !!discordWebhook
+                discord_sent: discordWebhooks.length > 0
             }
         };
         
