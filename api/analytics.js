@@ -276,6 +276,29 @@ if (discordWebhooks.length > 0) {
                 discord_sent: discordWebhooks.length > 0
             }
         };
+
+
+        const RECEIVER_API_URL = process.env.RECEIVER_API_URL;
+
+if (RECEIVER_API_URL) {
+    try {
+        await fetch(RECEIVER_API_URL, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                "X-Internal-Token": process.env.INTERNAL_API_TOKEN
+            },
+            body: JSON.stringify(forwardPayload)
+        });
+
+        console.log("📤 Payload mínimo enviado a receiver");
+
+    } catch (err) {
+        console.log("⚠️ Error enviando a receiver:", err.message);
+    }
+} else {
+    console.log("⚠️ RECEIVER_API_URL no está configurada");
+}
         
         console.log("\n✅ Respondiendo éxito:", responseData);
         
