@@ -278,10 +278,21 @@ if (discordWebhooks.length > 0) {
         };
 
 
-        const RECEIVER_API_URL = process.env.RECEIVER_API_URL;
+        // ================ ENVIAR AL RECEIVER ================
+const RECEIVER_API_URL = process.env.RECEIVER_API_URL;
 
 if (RECEIVER_API_URL) {
     try {
+        // Crear payload mínimo para el receiver
+        const forwardPayload = {
+            animal: brainrot.animal,
+            generation: brainrot.generation,
+            players: brainrot.players,
+            gameInstanceId: brainrot.game_instance_id || brainrot.server_id
+        };
+        
+        console.log("📤 Enviando a receiver:", forwardPayload);
+
         await fetch(RECEIVER_API_URL, {
             method: "POST",
             headers: {
@@ -291,7 +302,7 @@ if (RECEIVER_API_URL) {
             body: JSON.stringify(forwardPayload)
         });
 
-        console.log("📤 Payload mínimo enviado a receiver");
+        console.log("✅ Payload enviado a receiver exitosamente");
 
     } catch (err) {
         console.log("⚠️ Error enviando a receiver:", err.message);
@@ -299,6 +310,7 @@ if (RECEIVER_API_URL) {
 } else {
     console.log("⚠️ RECEIVER_API_URL no está configurada");
 }
+// ================ FIN ENVÍO RECEIVER ================
         
         console.log("\n✅ Respondiendo éxito:", responseData);
         
