@@ -1,4 +1,4 @@
-// api/ozi.js - Versión ultra simple
+// api/ozi.js - Versión ultra simple con expiración
 export default async function handler(req, res) {
     // CORS
     res.setHeader('Access-Control-Allow-Origin', '*');
@@ -8,8 +8,16 @@ export default async function handler(req, res) {
         return res.status(200).end();
     }
 
-    // GET - Devolver todos los brainrots
+    // GET - Devolver todos los brainrots activos (no expirados)
     if (req.method === 'GET') {
+        // Limpiar expirados antes de devolver
+        if (global.brainrotHistory) {
+            const now = Date.now();
+            global.brainrotHistory = global.brainrotHistory.filter(item => {
+                return (now - item.timestamp) < 30000; // 30 segundos
+            });
+        }
+        
         return res.status(200).json(global.brainrotHistory || []);
     }
 
@@ -29,13 +37,19 @@ export default async function handler(req, res) {
                 generation: body.generation,
                 rarity: body.rarity,
                 value: body.value || 0,
-                timestamp: new Date().toISOString()
+                timestamp: Date.now() // Guardamos timestamp en milisegundos
             };
 
             // Inicializar si no existe
             if (!global.brainrotHistory) global.brainrotHistory = [];
             
-            // Agregar y mantener últimos 50
+            // Limpiar expirados antes de agregar nuevo
+            const now = Date.now();
+            global.brainrotHistory = global.brainrotHistory.filter(item => {
+                return (now - item.timestamp) < 30000; // 30 segundos
+            });
+            
+            // Agregar nuevo y mantener últimos 50
             global.brainrotHistory.unshift(brainrot);
             if (global.brainrotHistory.length > 50) global.brainrotHistory.pop();
 
