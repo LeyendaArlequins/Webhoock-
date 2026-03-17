@@ -1,59 +1,9 @@
-// api/ozi.js
 import crypto from "crypto";
 
-const SECRET = "clave_ultra_secreta";
-
-// ===============================
-// 🔧 FUNCIONES INTERNAS
-// ===============================
-
-function limpiarExpirados() {
-    const now = Date.now();
-    global.brainrotHistory = (global.brainrotHistory || []).filter(
-        item => (now - item.timestamp) < 30000 // 30s
-    );
-}
-
-function generarToken(jobid) {
-    const expires = Date.now() + 10000; // 10s
-
-    const data = `${jobid}:${expires}`;
-
-    const signature = crypto
-        .createHmac("sha256", SECRET)
-        .update(data)
-        .digest("hex");
-
-    return `${data}:${signature}`;
-}
-
-function validarToken(token) {
-    try {
-        const [jobid, expires, signature] = token.split(":");
-
-        if (Date.now() > Number(expires)) return null;
-
-        const data = `${jobid}:${expires}`;
-
-        const validSig = crypto
-            .createHmac("sha256", SECRET)
-            .update(data)
-            .digest("hex");
-
-        if (signature !== validSig) return null;
-
-        return jobid;
-    } catch {
-        return null;
-    }
-}
-
-// ===============================
-// 🚀 HANDLER PRINCIPAL
-// ===============================
-
 export default async function handler(req, res) {
+    // =========================
     // CORS
+    // =========================
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -62,16 +12,22 @@ export default async function handler(req, res) {
         return res.status(200).end();
     }
 
+    const action = req.query.action;
+
+    // memoria (funciona porque todo pasa por ESTE endpoint)
     if (!global.brainrotHistory) global.brainrotHistory = [];
 
-    limpiarExpirados();
+    const now = Date.now();
 
-    const url = req.url || "";
+    // limpiar expirados
+    global.brainrotHistory = global.brainrotHistory.filter(
+        x => (now - x.timestamp) < 30000
+    );
 
-    // ===============================
-    // 📥 POST /api/ozi → GUARDAR
-    // ===============================
-    if (req.method === "POST" && url.includes("/api/ozi")) {
+    // =========================
+    // 📥 AGREGAR (POST ?action=add)
+    // =========================
+    if (req.method === "POST" && action === "add") {
         try {
             const body = req.body;
 
@@ -79,49 +35,49 @@ export default async function handler(req, res) {
                 return res.status(400).json({ error: "Faltan datos" });
             }
 
-            const brainrot = {
-                id: crypto.randomUUID(),
-                jobid: body.jobid, // 🔴 SOLO servidor lo ve
+            const item = {
+                id: crypto.randomUUID(), // ID público
+                jobid: body.jobid,       // 🔴 privado
                 name: body.name,
                 generation: body.generation,
                 rarity: body.rarity,
                 value: body.value || 0,
-                timestamp: Date.now()
+                timestamp: now
             };
 
-            global.brainrotHistory.unshift(brainrot);
+            global.brainrotHistory.unshift(item);
 
-            // limitar tamaño
+            // limitar a 50
             if (global.brainrotHistory.length > 50) {
                 global.brainrotHistory.pop();
             }
 
             return res.status(200).json({ success: true });
 
-        } catch (err) {
-            return res.status(500).json({ error: err.message });
+        } catch (e) {
+            return res.status(500).json({ error: e.message });
         }
     }
 
-    // ===============================
-    // 📤 GET /api/ozi → LISTA SEGURA
-    // ===============================
-    if (req.method === "GET" && url.includes("/api/ozi")) {
-        const safe = global.brainrotHistory.map(item => ({
-            id: item.id,
-            name: item.name,
-            generation: item.generation,
-            rarity: item.rarity,
-            value: item.value
+    // =========================
+    // 📤 LISTA (GET ?action=list)
+    // =========================
+    if (req.method === "GET" && action === "list") {
+        const safe = global.brainrotHistory.map(x => ({
+            id: x.id,
+            name: x.name,
+            generation: x.generation,
+            rarity: x.rarity,
+            value: x.value
         }));
 
         return res.status(200).json(safe);
     }
 
-    // ===============================
-    // 🔐 POST /api/join → TOKEN
-    // ===============================
-    if (req.method === "POST" && url.includes("/api/join")) {
+    // =========================
+    // 🔐 JOIN (POST ?action=join)
+    // =========================
+    if (req.method === "POST" && action === "join") {
         try {
             const { id } = req.body;
 
@@ -129,39 +85,21 @@ export default async function handler(req, res) {
                 return res.status(400).json({ error: "Falta id" });
             }
 
-            const now = Date.now();
-
-            const item = global.brainrotHistory.find(
-                x => x.id === id && (now - x.timestamp) < 30000
-            );
+            const item = global.brainrotHistory.find(x => x.id === id);
 
             if (!item) {
                 return res.status(404).json({ error: "No encontrado" });
             }
 
-            const token = generarToken(item.jobid);
+            // 🔥 devolvemos directo el jobid (rápido)
+            return res.status(200).json({
+                jobid: item.jobid
+            });
 
-            return res.status(200).json({ token });
-
-        } catch (err) {
-            return res.status(500).json({ error: err.message });
+        } catch (e) {
+            return res.status(500).json({ error: e.message });
         }
     }
 
-    // ===============================
-    // 🧪 (OPCIONAL) VALIDAR TOKEN
-    // ===============================
-    if (req.method === "POST" && url.includes("/api/validate")) {
-        const { token } = req.body;
-
-        const jobid = validarToken(token);
-
-        if (!jobid) {
-            return res.status(401).json({ error: "Token inválido" });
-        }
-
-        return res.status(200).json({ jobid });
-    }
-
-    return res.status(405).json({ error: "Ruta no válida" });
+    return res.status(400).json({ error: "Ruta inválida" });
 }
