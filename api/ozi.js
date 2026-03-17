@@ -1,104 +1,114 @@
 import crypto from "crypto";
 
+const SECRET = "super_secret_key_123"; // 🔴 cambia esto
+
 export default async function handler(req, res) {
-    // =========================
-    // CORS
-    // =========================
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
-    if (req.method === 'OPTIONS') {
-        return res.status(200).end();
-    }
+    if (req.method === 'OPTIONS') return res.status(200).end();
 
     const action = req.query.action;
 
-    // memoria (funciona porque todo pasa por ESTE endpoint)
-    if (!global.brainrotHistory) global.brainrotHistory = [];
+    if (!global.store) global.store = [];
+    if (!global.usedTokens) global.usedTokens = new Set();
 
     const now = Date.now();
 
     // limpiar expirados
-    global.brainrotHistory = global.brainrotHistory.filter(
-        x => (now - x.timestamp) < 30000
-    );
+    global.store = global.store.filter(x => (now - x.timestamp) < 30000);
 
-    // =========================
-    // 📥 AGREGAR (POST ?action=add)
-    // =========================
+    // =====================
+    // ADD
+    // =====================
     if (req.method === "POST" && action === "add") {
-        try {
-            const body = req.body;
+        const b = req.body;
 
-            if (!body?.name || !body?.jobid) {
-                return res.status(400).json({ error: "Faltan datos" });
-            }
+        const item = {
+            id: crypto.randomUUID(),
+            jobid: b.jobid,
+            name: b.name,
+            value: b.value || 0,
+            timestamp: now
+        };
 
-            const item = {
-                id: crypto.randomUUID(), // ID público
-                jobid: body.jobid,       // 🔴 privado
-                name: body.name,
-                generation: body.generation,
-                rarity: body.rarity,
-                value: body.value || 0,
-                timestamp: now
-            };
-
-            global.brainrotHistory.unshift(item);
-
-            // limitar a 50
-            if (global.brainrotHistory.length > 50) {
-                global.brainrotHistory.pop();
-            }
-
-            return res.status(200).json({ success: true });
-
-        } catch (e) {
-            return res.status(500).json({ error: e.message });
-        }
+        global.store.unshift(item);
+        return res.json({ success: true });
     }
 
-    // =========================
-    // 📤 LISTA (GET ?action=list)
-    // =========================
+    // =====================
+    // LIST
+    // =====================
     if (req.method === "GET" && action === "list") {
-        const safe = global.brainrotHistory.map(x => ({
+        return res.json(global.store.map(x => ({
             id: x.id,
             name: x.name,
-            generation: x.generation,
-            rarity: x.rarity,
             value: x.value
-        }));
-
-        return res.status(200).json(safe);
+        })));
     }
 
-    // =========================
-    // 🔐 JOIN (POST ?action=join)
-    // =========================
+    // =====================
+    // TICKET
+    // =====================
+    if (req.method === "POST" && action === "ticket") {
+        const { id } = req.body;
+
+        const item = global.store.find(x => x.id === id);
+        if (!item) return res.status(404).json({ error: "No encontrado" });
+
+        const exp = now + 5000;
+
+        const payload = `${id}:${exp}`;
+        const sig = crypto
+            .createHmac("sha256", SECRET)
+            .update(payload)
+            .digest("hex");
+
+        const token = `${payload}:${sig}`;
+
+        return res.json({ token });
+    }
+
+    // =====================
+    // JOIN
+    // =====================
     if (req.method === "POST" && action === "join") {
-        try {
-            const { id } = req.body;
+        const { token } = req.body;
 
-            if (!id) {
-                return res.status(400).json({ error: "Falta id" });
-            }
+        if (!token) return res.status(400).json({ error: "No token" });
 
-            const item = global.brainrotHistory.find(x => x.id === id);
-
-            if (!item) {
-                return res.status(404).json({ error: "No encontrado" });
-            }
-
-            // 🔥 devolvemos directo el jobid (rápido)
-            return res.status(200).json({
-                jobid: item.jobid
-            });
-
-        } catch (e) {
-            return res.status(500).json({ error: e.message });
+        if (global.usedTokens.has(token)) {
+            return res.status(403).json({ error: "Token usado" });
         }
+
+        const parts = token.split(":");
+        if (parts.length !== 3) {
+            return res.status(400).json({ error: "Token inválido" });
+        }
+
+        const [id, exp, sig] = parts;
+
+        if (Date.now() > parseInt(exp)) {
+            return res.status(403).json({ error: "Expirado" });
+        }
+
+        const payload = `${id}:${exp}`;
+        const validSig = crypto
+            .createHmac("sha256", SECRET)
+            .update(payload)
+            .digest("hex");
+
+        if (sig !== validSig) {
+            return res.status(403).json({ error: "Firma inválida" });
+        }
+
+        const item = global.store.find(x => x.id === id);
+        if (!item) return res.status(404).json({ error: "No encontrado" });
+
+        global.usedTokens.add(token); // 🔥 1 solo uso
+
+        return res.json({ jobid: item.jobid });
     }
 
     return res.status(400).json({ error: "Ruta inválida" });
