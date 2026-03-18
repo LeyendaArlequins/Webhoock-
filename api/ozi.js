@@ -1,4 +1,4 @@
-const REQUIRED_KEY = "MI_CLAVE_SECRETA";
+const REQUIRED_KEY = "FskfknOo!18529nsnj";
 
 export default async function handler(req, res) {
     // CORS
