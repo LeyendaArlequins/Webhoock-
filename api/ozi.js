@@ -1,32 +1,39 @@
-// api/ozi.js - Versión ultra simple con expiración
+const REQUIRED_KEY = "MI_CLAVE_SECRETA";
+
 export default async function handler(req, res) {
     // CORS
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-    
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, x-api-key');
+
     if (req.method === 'OPTIONS') {
         return res.status(200).end();
     }
 
-    // GET - Devolver todos los brainrots activos (no expirados)
+    // 🔐 Validar header
+    const apiKey = req.headers['x-api-key'];
+
+    if (apiKey !== REQUIRED_KEY) {
+        return res.status(401).json({ error: 'No autorizado' });
+    }
+
+    // === GET ===
     if (req.method === 'GET') {
-        // Limpiar expirados antes de devolver
         if (global.brainrotHistory) {
             const now = Date.now();
             global.brainrotHistory = global.brainrotHistory.filter(item => {
-                return (now - item.timestamp) < 30000; // 30 segundos
+                return (now - item.timestamp) < 30000;
             });
         }
-        
+
         return res.status(200).json(global.brainrotHistory || []);
     }
 
-    // POST - Recibir nuevo brainrot
+    // === POST ===
     if (req.method === 'POST') {
         try {
             const body = req.body;
-            
-            // Validación mínima
+
             if (!body?.name || !body?.jobid || !body?.generation || !body?.rarity) {
                 return res.status(400).json({ error: 'Faltan datos' });
             }
@@ -37,21 +44,20 @@ export default async function handler(req, res) {
                 generation: body.generation,
                 rarity: body.rarity,
                 value: body.value || 0,
-                timestamp: Date.now() // Guardamos timestamp en milisegundos
+                timestamp: Date.now()
             };
 
-            // Inicializar si no existe
             if (!global.brainrotHistory) global.brainrotHistory = [];
-            
-            // Limpiar expirados antes de agregar nuevo
+
             const now = Date.now();
             global.brainrotHistory = global.brainrotHistory.filter(item => {
-                return (now - item.timestamp) < 30000; // 30 segundos
+                return (now - item.timestamp) < 30000;
             });
-            
-            // Agregar nuevo y mantener últimos 50
+
             global.brainrotHistory.unshift(brainrot);
-            if (global.brainrotHistory.length > 50) global.brainrotHistory.pop();
+            if (global.brainrotHistory.length > 50) {
+                global.brainrotHistory.pop();
+            }
 
             return res.status(200).json({ success: true, data: brainrot });
 
